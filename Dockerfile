@@ -1,21 +1,16 @@
-# 使用 Go 语言官方基础镜像
-FROM golang:latest
+FROM alpine:latest
 
-# 设置工作目录
+ENV TZ=Asia/Shanghai
+
+RUN apk --no-cache add ca-certificates \
+	tzdata
+
 WORKDIR /app
 
-# 复制所有文件到工作目录
-COPY . .
+ADD ./build/linux_amd64/bin ./
 
-# 初始化 Go module
-RUN go mod init
+LABEL Name=goweb Version=0.0.1
 
-# 构建应用
-RUN go build -o easydarwin .
+EXPOSE 8080
 
-# 暴露所需的端口
-EXPOSE 554
-EXPOSE 10008
-
-# 启动应用
-CMD ["./easydarwin"]
+CMD [ "./bin" ]

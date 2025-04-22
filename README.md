@@ -121,3 +121,11 @@ The default configuration directory is `config.toml` located in the same directo
 + lal
 + sqlite
 + pion
+
+## Support
+
+Mail: [support@easydarwin.org](mailto:support@easydarwin.org) 
+
+Website: [www.EasyDarwin.org](https://www.easydarwin.org)
+
+WeChat: EasyDarwin

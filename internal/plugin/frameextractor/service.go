@@ -145,8 +145,11 @@ func (s *Service) AddTask(t conf.FrameExtractTask) error {
     s.RemoveTask(t.ID)
     
     // default to enabled
-    if t.Enabled == false {
-        t.Enabled = true
+    t.Enabled = true
+    
+    // ensure output_path defaults to task ID if empty
+    if strings.TrimSpace(t.OutputPath) == "" {
+        t.OutputPath = t.ID
     }
     
     // record into cfg

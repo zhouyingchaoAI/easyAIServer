@@ -156,9 +156,10 @@ func (s *Service) runLocalSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
         
         s.log.Info("starting ffmpeg", 
             slog.String("task", task.ID), 
-            slog.String("output_dir", dir),
-            slog.String("ffmpeg", ff),
-            slog.String("cmd", strings.Join(args, " ")))
+            slog.String("task_output_path", task.OutputPath),
+            slog.String("full_output_dir", dir),
+            slog.String("ffmpeg", ff))
+        s.log.Debug("ffmpeg command", slog.String("cmd", strings.Join(args, " ")))
 
         if err := cmd.Start(); err != nil {
             s.log.Error("start ffmpeg failed", slog.String("task", task.ID), slog.String("err", err.Error()))
@@ -176,6 +177,36 @@ func (s *Service) runLocalSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
             continue
         }
 
+        // monitor output directory for new files (helps verify saving)
+        go func() {
+            ticker := time.NewTicker(10 * time.Second)
+            defer ticker.Stop()
+            lastCount := 0
+            for {
+                select {
+                case <-ticker.C:
+                    files, _ := os.ReadDir(dir)
+                    count := 0
+                    for _, f := range files {
+                        if !f.IsDir() && strings.HasSuffix(strings.ToLower(f.Name()), ".jpg") {
+                            count++
+                        }
+                    }
+                    if count > lastCount {
+                        s.log.Info("snapshot progress", 
+                            slog.String("task", task.ID), 
+                            slog.Int("total_files", count),
+                            slog.String("output_dir", dir))
+                        lastCount = count
+                    }
+                case <-s.stop:
+                    return
+                case <-stop:
+                    return
+                }
+            }
+        }()
+        
         procDone := make(chan error, 1)
         go func() { procDone <- cmd.Wait() }()
         select {

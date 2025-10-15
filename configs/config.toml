@@ -209,3 +209,4 @@ id = 'cam1'
 rtsp_url = ''
 interval_ms = 1000
 output_path = 'cam1'
+enabled = false

@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// saveConfigToFile writes current tasks back to config.toml
+// saveConfigToFile writes current config and tasks back to config.toml
 func (s *Service) saveConfigToFile(cfgPath string) error {
 	if cfgPath == "" {
 		return nil // skip if no path provided
@@ -18,80 +18,53 @@ func (s *Service) saveConfigToFile(cfgPath string) error {
 	}
 
 	content := string(data)
-	
-	// find [frame_extractor] section and rebuild
 	lines := strings.Split(content, "\n")
-	var out []string
-	inSection := false
-	inMinioSection := false
-	skipTask := false
 	
-	for _, line := range lines {
+	var out []string
+	inFrameExtractor := false
+	sectionStart := -1
+	sectionEnd := -1
+	
+	// find [frame_extractor] section boundaries
+	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		
-		// detect section start
 		if trimmed == "[frame_extractor]" {
-			inSection = true
-			out = append(out, line)
+			inFrameExtractor = true
+			sectionStart = i
 			continue
 		}
 		
-		// detect minio subsection
-		if trimmed == "[frame_extractor.minio]" {
-			inMinioSection = true
-			continue
+		// detect end of frame_extractor section
+		if inFrameExtractor && strings.HasPrefix(trimmed, "[") && 
+		   !strings.HasPrefix(trimmed, "[[frame_extractor") && 
+		   !strings.HasPrefix(trimmed, "[frame_extractor.") {
+			sectionEnd = i
+			break
 		}
-		
-		// skip minio lines until next section
-		if inMinioSection {
-			if strings.HasPrefix(trimmed, "[") && !strings.HasPrefix(trimmed, "[frame_extractor.minio") {
-				inMinioSection = false
-			} else {
-				continue
-			}
-		}
-		
-		// detect next section or task array start
-		if inSection && (strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "[[frame_extractor.tasks]]")) {
-			if strings.HasPrefix(trimmed, "[[frame_extractor.tasks]]") {
-				skipTask = true
-				continue
-			} else {
-				// end of frame_extractor section, append config and tasks before next section
-				out = append(out, s.buildConfigLines()...)
-				out = append(out, s.buildTaskLines()...)
-				inSection = false
-				skipTask = false
-				out = append(out, line)
-				continue
-			}
-		}
-		
-		// skip config lines in frame_extractor section (will rebuild)
-		if inSection && !skipTask {
-			if strings.Contains(line, "enable") || strings.Contains(line, "interval_ms") || 
-			   strings.Contains(line, "output_dir") || strings.Contains(line, "store") {
-				continue
-			}
-		}
-		
-		// skip old task definitions
-		if skipTask {
-			if strings.HasPrefix(trimmed, "[") && !strings.HasPrefix(trimmed, "[[frame_extractor") {
-				// new section, stop skipping
-				skipTask = false
-				out = append(out, s.buildConfigLines()...)
-				out = append(out, s.buildTaskLines()...)
-				out = append(out, line)
-			}
-			continue
-		}
-		
-		out = append(out, line)
 	}
 	
-	// if still in section at EOF, append config and tasks
-	if inSection || skipTask {
+	// rebuild content
+	if sectionStart >= 0 {
+		// add lines before section
+		out = append(out, lines[:sectionStart]...)
+		
+		// add new section
+		out = append(out, "[frame_extractor]")
+		out = append(out, s.buildConfigLines()...)
+		out = append(out, s.buildTaskLines()...)
+		
+		// add lines after section
+		if sectionEnd >= 0 {
+			out = append(out, lines[sectionEnd:]...)
+		} else {
+			// section goes to EOF
+		}
+	} else {
+		// section not found, append to end
+		out = append(out, lines...)
+		out = append(out, "")
+		out = append(out, "[frame_extractor]")
 		out = append(out, s.buildConfigLines()...)
 		out = append(out, s.buildTaskLines()...)
 	}
@@ -129,4 +102,3 @@ func (s *Service) buildTaskLines() []string {
 	}
 	return lines
 }
-

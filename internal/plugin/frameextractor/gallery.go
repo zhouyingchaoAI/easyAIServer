@@ -3,6 +3,7 @@ package frameextractor
 import (
 	"context"
 	"easydarwin/internal/conf"
+	"easydarwin/utils/pkg/system"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -14,6 +15,10 @@ import (
 
 	"github.com/minio/minio-go/v7"
 )
+
+func getWorkDir() string {
+	return system.GetCWD()
+}
 
 // SnapshotInfo represents a single snapshot file
 type SnapshotInfo struct {
@@ -49,19 +54,36 @@ func (s *Service) listLocalSnapshots(taskID string) ([]SnapshotInfo, error) {
 	
 	baseDir := s.cfg.OutputDir
 	if baseDir == "" {
-		baseDir = "./snapshots"
+		baseDir = filepath.Join(".", "snapshots")
+	}
+	// ensure absolute path for correct calculation
+	if !filepath.IsAbs(baseDir) {
+		baseDir = filepath.Join(getWorkDir(), baseDir)
 	}
 	dir := filepath.Join(baseDir, task.OutputPath)
+	
+	s.log.Debug("listing snapshots", 
+		slog.String("task", taskID),
+		slog.String("base_dir", baseDir),
+		slog.String("scan_dir", dir))
 	
 	var results []SnapshotInfo
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			s.log.Warn("walk error", slog.String("path", path), slog.String("err", err.Error()))
 			return nil // skip errors
 		}
 		if d.IsDir() {
 			return nil
 		}
-		if !strings.HasSuffix(strings.ToLower(d.Name()), ".jpg") && !strings.HasSuffix(strings.ToLower(d.Name()), ".jpeg") {
+		
+		name := d.Name()
+		// skip temp files
+		if strings.HasSuffix(name, ".tmp") || strings.HasPrefix(name, ".") {
+			return nil
+		}
+		
+		if !strings.HasSuffix(strings.ToLower(name), ".jpg") && !strings.HasSuffix(strings.ToLower(name), ".jpeg") {
 			return nil
 		}
 		
@@ -70,13 +92,14 @@ func (s *Service) listLocalSnapshots(taskID string) ([]SnapshotInfo, error) {
 			return nil
 		}
 		
-		relPath := strings.TrimPrefix(path, baseDir)
-		relPath = strings.TrimPrefix(relPath, "/")
-		relPath = strings.TrimPrefix(relPath, "\\")
+		// compute relative path from baseDir
+		relPath, _ := filepath.Rel(baseDir, path)
+		// normalize path separators for URL
+		relPath = filepath.ToSlash(relPath)
 		
 		results = append(results, SnapshotInfo{
 			TaskID:   taskID,
-			Filename: d.Name(),
+			Filename: name,
 			Path:     relPath,
 			Size:     info.Size(),
 			ModTime:  info.ModTime(),
@@ -115,9 +138,12 @@ func (s *Service) listMinioSnapshots(taskID string) ([]SnapshotInfo, error) {
 		return nil, fmt.Errorf("task not found")
 	}
 	
-	prefix := filepath.Join(s.minio.base, task.OutputPath) + "/"
+	// use forward slashes for S3/MinIO
+	prefix := filepath.ToSlash(filepath.Join(s.minio.base, task.OutputPath)) + "/"
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	
+	s.log.Debug("listing minio snapshots", slog.String("task", taskID), slog.String("prefix", prefix))
 	
 	objectCh := s.minio.client.ListObjects(ctx, s.minio.bucket, minio.ListObjectsOptions{
 		Prefix:    prefix,
@@ -131,6 +157,10 @@ func (s *Service) listMinioSnapshots(taskID string) ([]SnapshotInfo, error) {
 		}
 		
 		name := filepath.Base(object.Key)
+		// skip non-image files and .keep markers
+		if name == ".keep" || strings.HasPrefix(name, ".") {
+			continue
+		}
 		if !strings.HasSuffix(strings.ToLower(name), ".jpg") && !strings.HasSuffix(strings.ToLower(name), ".jpeg") {
 			continue
 		}
@@ -172,9 +202,13 @@ func (s *Service) DeleteSnapshot(taskID, path string) error {
 func (s *Service) deleteLocalSnapshot(relPath string) error {
 	baseDir := s.cfg.OutputDir
 	if baseDir == "" {
-		baseDir = "./snapshots"
+		baseDir = filepath.Join(".", "snapshots")
+	}
+	if !filepath.IsAbs(baseDir) {
+		baseDir = filepath.Join(getWorkDir(), baseDir)
 	}
 	fullPath := filepath.Join(baseDir, relPath)
+	s.log.Info("deleting snapshot", slog.String("path", fullPath))
 	return os.Remove(fullPath)
 }
 

@@ -64,7 +64,8 @@ func (s *Service) createMinioPath(task conf.FrameExtractTask) error {
 	}
 	
 	// create a .keep file to establish the path
-	key := filepath.Join(s.minio.base, task.OutputPath, ".keep")
+	// use forward slashes for MinIO paths (S3 convention)
+	key := filepath.ToSlash(filepath.Join(s.minio.base, task.OutputPath, ".keep"))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	
@@ -76,7 +77,7 @@ func (s *Service) createMinioPath(task conf.FrameExtractTask) error {
 		return err
 	}
 	
-	s.log.Info("created minio path", slog.String("task", task.ID), slog.String("path", filepath.Join(s.minio.base, task.OutputPath)))
+	s.log.Info("created minio path", slog.String("task", task.ID), slog.String("key", key))
 	return nil
 }
 
@@ -86,7 +87,8 @@ func (s *Service) deleteMinioPath(task conf.FrameExtractTask) error {
 		return fmt.Errorf("minio not initialized")
 	}
 	
-	prefix := filepath.Join(s.minio.base, task.OutputPath) + "/"
+	// use forward slashes for S3/MinIO
+	prefix := filepath.ToSlash(filepath.Join(s.minio.base, task.OutputPath)) + "/"
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	
@@ -110,7 +112,7 @@ func (s *Service) deleteMinioPath(task conf.FrameExtractTask) error {
 		count++
 	}
 	
-	s.log.Info("deleted minio path", slog.String("task", task.ID), slog.String("path", prefix), slog.Int("objects", count))
+	s.log.Info("deleted minio path", slog.String("task", task.ID), slog.String("prefix", prefix), slog.Int("objects", count))
 	return nil
 }
 
@@ -207,14 +209,17 @@ func (s *Service) runMinioSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
 
 				// upload frame
 				ts := time.Now().Format("20060102-150405.000")
-				key := filepath.Join(s.minio.base, task.OutputPath, fmt.Sprintf("%s.jpg", ts))
+				// use forward slashes for MinIO/S3 paths
+				key := filepath.ToSlash(filepath.Join(s.minio.base, task.OutputPath, fmt.Sprintf("%s.jpg", ts)))
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				_, err = s.minio.client.PutObject(ctx, s.minio.bucket, key, &frame, int64(frame.Len()), minio.PutObjectOptions{
 					ContentType: "image/jpeg",
 				})
 				cancel()
 				if err != nil {
-					s.log.Warn("minio upload failed", slog.String("task", task.ID), slog.String("err", err.Error()))
+					s.log.Warn("minio upload failed", slog.String("task", task.ID), slog.String("key", key), slog.String("err", err.Error()))
+				} else {
+					s.log.Debug("uploaded snapshot", slog.String("task", task.ID), slog.String("key", key), slog.Int("size", frame.Len()))
 				}
 			}
 		}()

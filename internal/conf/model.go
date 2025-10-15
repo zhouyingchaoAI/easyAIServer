@@ -134,7 +134,7 @@ type Bootstrap struct {
 	HttpFmp4Config        HttpFmp4Config        `json:"httpfmp4" mapstructure:"httpfmp4config"`
 	HttptsConfig          HttptsConfig          `json:"httpts" mapstructure:"httptsconfig"`
 	InSessionConfig       InSessionConfig       `json:"in_session" mapstructure:"insessionconfig"`
-	LogConfig             nazalog.Option        `json:"log" mapstructure:"log"`
+	LogConfig             nazalog.Option        `json:"log" mapstructure:"logconfig"`
 	RecordConfig          RecordConfig          `json:"record" mapstructure:"recordconfig"`
 	RelayPushConfig       RelayPushConfig       `json:"relay_push" mapstructure:"relaypushconfig"`
 	RoomConfig            RoomConfig            `json:"room" mapstructure:"roomconfig"`

@@ -8,6 +8,21 @@
           存储配置
         </span>
       </template>
+      <template #extra>
+        <a-button @click="fetchConfig" size="small">
+          <template #icon><ReloadOutlined /></template>
+          重新加载
+        </a-button>
+      </template>
+      <a-alert 
+        v-if="configLoadSuccess"
+        message="配置已从服务器加载"
+        type="success"
+        show-icon
+        closable
+        class="mb-3"
+        @close="configLoadSuccess = false"
+      />
       <a-form :model="config" layout="vertical">
         <a-row :gutter="24">
           <a-col :xs="24" :sm="12" :md="8">
@@ -309,7 +324,7 @@ import {
   FolderOutlined, FolderOpenOutlined, ApiOutlined, InboxOutlined,
   KeyOutlined, LockOutlined, SaveOutlined, VideoCameraOutlined,
   TagOutlined, LinkOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
-  PictureOutlined, PlayCircleOutlined, PauseCircleOutlined
+  PictureOutlined, PlayCircleOutlined, PauseCircleOutlined, ReloadOutlined
 } from '@ant-design/icons-vue'
 import { frameApi } from '@/api'
 
@@ -333,6 +348,7 @@ const config = ref({
 const form = ref({ id: '', rtsp_url: '', interval_ms: 1000, output_path: '' })
 const loading = ref(false)
 const configLoading = ref(false)
+const configLoadSuccess = ref(false)
 const items = ref([])
 const taskActionLoading = ref({})
 const editingInterval = ref({})
@@ -349,10 +365,11 @@ const columns = [
 const fetchConfig = async () => {
   try {
     const { data } = await frameApi.getConfig()
+    console.log('fetched config from server:', data)
     if (data) {
-      config.value = { ...config.value, ...data }
-      if (!config.value.minio) {
-        config.value.minio = {
+      // ensure MinIO sub-config exists before merge
+      if (!data.minio || typeof data.minio !== 'object') {
+        data.minio = {
           endpoint: '',
           bucket: '',
           access_key: '',
@@ -361,9 +378,28 @@ const fetchConfig = async () => {
           base_path: ''
         }
       }
+      // deep merge config
+      config.value = {
+        enable: data.enable !== undefined ? data.enable : config.value.enable,
+        interval_ms: data.interval_ms || config.value.interval_ms,
+        output_dir: data.output_dir || config.value.output_dir,
+        store: data.store || config.value.store,
+        minio: {
+          endpoint: data.minio.endpoint || '',
+          bucket: data.minio.bucket || '',
+          access_key: data.minio.access_key || '',
+          secret_key: data.minio.secret_key || '',
+          use_ssl: data.minio.use_ssl || false,
+          base_path: data.minio.base_path || ''
+        }
+      }
+      console.log('config after merge:', config.value)
+      configLoadSuccess.value = true
+      setTimeout(() => { configLoadSuccess.value = false }, 3000)
     }
   } catch (e) {
     console.error('fetch config failed', e)
+    message.error('加载配置失败')
   }
 }
 
@@ -376,9 +412,13 @@ const onSaveConfig = async () => {
   }
   configLoading.value = true
   try {
+    console.log('saving config:', config.value)
     await frameApi.updateConfig(config.value)
-    message.success('配置保存成功')
+    message.success('配置保存成功，已持久化到config.toml')
+    // reload config to verify
+    await fetchConfig()
   } catch (e) {
+    console.error('save config error:', e)
     message.error(e?.response?.data?.error || '配置保存失败')
   } finally {
     configLoading.value = false
@@ -488,6 +528,10 @@ onMounted(() => {
 .config-card, .task-card {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px rgba(0, 0, 0, 0.02);
   border-radius: 8px;
+}
+
+.mb-3 {
+  margin-bottom: 12px;
 }
 
 .mb-4 {

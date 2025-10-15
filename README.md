@@ -23,7 +23,9 @@ EasyDarwin is licensed under the MIT License.
 + RESTful API with apidoc documentation tool (located in the web directory)
 + **🎬 Frame Extractor Plugin**: Extract frames from RTSP streams at configurable intervals
   - Supports local filesystem and MinIO object storage
-  - Web UI for task management
+  - **Task type classification** for AI analysis (人数统计, 人员跌倒, 吸烟检测, etc.)
+  - Hierarchical directory structure: `{task_type}/{task_id}/frames`
+  - Web UI for task management with type selection
   - Auto-reconnect and exponential backoff
   - Auto-create/delete MinIO paths on task add/remove
   - Configuration persistence to config.toml
@@ -82,7 +84,9 @@ easydarwin
 
 ### Frame Extractor Plugin Quick Start
 
-See [Frame Extractor Documentation](doc/FRAME_EXTRACTOR.md) for detailed usage.
+See detailed documentation:
+- [Frame Extractor Documentation](doc/FRAME_EXTRACTOR.md) - Complete guide
+- [Task Type Classification](doc/TASK_TYPES.md) - AI analysis preparation
 
 ```shell
 # Enable plugin
@@ -94,6 +98,11 @@ make build/local
 
 # Access web UI
 # Open: http://localhost:10086/#/frame-extractor
+
+# Features:
+# - Create tasks with type classification (人数统计, 人员跌倒, etc.)
+# - Frames saved to: snapshots/{task_type}/{task_id}/
+# - Ready for AI analysis service integration
 ```
 
 ### System Service

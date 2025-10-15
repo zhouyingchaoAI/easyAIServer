@@ -494,13 +494,18 @@ const onStreamSelect = async (streamId, option) => {
     form.value.rtsp_url = '获取播放地址中...'
     
     const { data } = await live.getPlayUrl(id)
-    if (data?.info?.RTSP) {
-      form.value.rtsp_url = data.info.RTSP
-      console.log('selected stream RTSP URL:', data.info.RTSP)
+    console.log('API response:', data)
+    
+    // API returns lowercase field names: rtsp, http_flv, etc.
+    const rtspUrl = data?.info?.rtsp || data?.info?.RTSP
+    if (rtspUrl) {
+      form.value.rtsp_url = rtspUrl
+      console.log('selected stream RTSP URL:', rtspUrl)
       message.success(`已选择: ${option.streamName}`)
     } else {
       form.value.rtsp_url = originalValue
       message.error('未获取到RTSP播放地址')
+      console.warn('No RTSP URL found in response:', data)
     }
   } catch (e) {
     console.error('get play url failed', e)

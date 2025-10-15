@@ -67,22 +67,23 @@ curl http://localhost:5066/api/v1/live/playurl/1
 ```json
 {
   "info": {
-    "ID": 1,
-    "Name": "",
-    "RTSP": "rtsp://10.1.6.230:554/live/stream_1",
-    "HttpFlv": "http://10.1.6.230:5066/flv/live/stream_1.flv",
-    "HttpHls": "http://10.1.6.230:5066/ts/hls/stream_1/playlist.m3u8",
-    "WsFlv": "ws://10.1.6.230:5066/ws_flv/live/stream_1.flv",
-    "WEBRTC": "webrtc://10.1.6.230:5066/webrtc/play/live/stream_1"
+    "id": 1,
+    "name": "",
+    "rtsp": "rtsp://localhost:15544/live/stream_1",
+    "http_flv": "http://localhost:5066/flv/live/stream_1.flv",
+    "http_hls": "http://localhost:5066/ts/hls/stream_1/playlist.m3u8",
+    "ws_flv": "ws://localhost:5066/ws_flv/live/stream_1.flv",
+    "webrtc": "webrtc://localhost:5066/webrtc/play/live/stream_1"
   }
 }
 ```
 
-**关键字段说明**：
-- `RTSP`: RTSP协议播放地址（用于抽帧）
-- `HttpFlv`: HTTP-FLV协议播放地址
-- `HttpHls`: HLS协议播放地址
-- `WEBRTC`: WebRTC协议播放地址
+**关键字段说明**（注意：字段名为小写+下划线）：
+- `rtsp`: RTSP协议播放地址（用于抽帧）
+- `http_flv`: HTTP-FLV协议播放地址
+- `http_hls`: HLS协议播放地址
+- `ws_flv`: WebSocket-FLV协议播放地址
+- `webrtc`: WebRTC协议播放地址
 
 ---
 
@@ -114,10 +115,13 @@ const onStreamSelect = async (streamId, option) => {
   // 调用API获取转发地址
   const { data } = await live.getPlayUrl(id)
   
-  // 提取RTSP播放地址
-  if (data?.info?.RTSP) {
-    form.value.rtsp_url = data.info.RTSP
+  // 提取RTSP播放地址（注意：字段名是小写 rtsp）
+  const rtspUrl = data?.info?.rtsp || data?.info?.RTSP  // 兼容大小写
+  if (rtspUrl) {
+    form.value.rtsp_url = rtspUrl
     message.success(`已选择: ${option.streamName}`)
+  } else {
+    message.error('未获取到RTSP播放地址')
   }
 }
 ```
@@ -284,13 +288,14 @@ tail -f logs/sugar.log | grep "frame extractor"
 ```typescript
 {
   info: {
-    ID: number
-    Name: string
-    RTSP: string       // RTSP播放地址
-    HttpFlv: string    // HTTP-FLV播放地址
-    HttpHls: string    // HLS播放地址
-    WsFlv: string      // WebSocket-FLV播放地址
-    WEBRTC: string     // WebRTC播放地址
+    id: number
+    name: string
+    rtsp: string       // RTSP播放地址
+    http_flv: string   // HTTP-FLV播放地址
+    http_hls: string   // HLS播放地址
+    ws_flv: string     // WebSocket-FLV播放地址
+    webrtc: string     // WebRTC播放地址
+    rtmp: string       // RTMP播放地址（可能为空）
   }
 }
 ```

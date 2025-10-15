@@ -143,11 +143,11 @@ type Bootstrap struct {
 	VodConfig             VodConfig             `json:"vod"`
 	RtspConfig            RtspConfig            `json:"rtsp"`
 	SrtConfig             config.SrtConfig      `json:"srt"`
-	StaticRelayPullConfig StaticRelayPullConfig `json:"static_relay_pull"`
-	LalConfig             LalConfig             `json:"lal"` // LalConfig对应的config.toml中则需要是 lalconfig 选项
+	StaticRelayPullConfig StaticRelayPullConfig `json:"static_relay_pull" mapstructure:"staticrelaypull"`
+	LalConfig             LalConfig             `json:"lal" mapstructure:"lalconfig"` // LalConfig对应的config.toml中则需要是 lalconfig 选项
 
 	// FrameExtractor 插件配置
-	FrameExtractor       FrameExtractorConfig   `json:"frame_extractor"`
+	FrameExtractor       FrameExtractorConfig   `json:"frame_extractor" mapstructure:"frame_extractor"`
 
 	*config.Config
 	LogicCfg *logic.Config
@@ -286,34 +286,34 @@ type VodConfig struct {
 
 // FrameExtractorConfig 抽帧插件配置
 type FrameExtractorConfig struct {
-    Enable       bool   `json:"enable"`
+    Enable       bool   `json:"enable" mapstructure:"enable"`
     // 全局默认抽帧间隔（毫秒），可被任务级覆盖
-    IntervalMs   int    `json:"interval_ms"`
+    IntervalMs   int    `json:"interval_ms" mapstructure:"interval_ms"`
     // 本地存储根目录
-    OutputDir    string `json:"output_dir"`
+    OutputDir    string `json:"output_dir" mapstructure:"output_dir"`
     // 存储类型：local|minio
-    Store        string `json:"store"`
+    Store        string `json:"store" mapstructure:"store"`
     // MinIO 配置（仅当 store==minio 时生效）
-    MinIO MinIOConfig `json:"minio"`
+    MinIO MinIOConfig `json:"minio" mapstructure:"minio"`
     // 任务清单（可选），未配置时仅启用模块等待 API 下发
-    Tasks []FrameExtractTask `json:"tasks"`
+    Tasks []FrameExtractTask `json:"tasks" mapstructure:"tasks"`
 }
 
 type MinIOConfig struct {
-    Endpoint  string `json:"endpoint"`
-    Bucket    string `json:"bucket"`
-    AccessKey string `json:"access_key"`
-    SecretKey string `json:"secret_key"`
-    UseSSL    bool   `json:"use_ssl"`
-    BasePath  string `json:"base_path"`
+    Endpoint  string `json:"endpoint" mapstructure:"endpoint"`
+    Bucket    string `json:"bucket" mapstructure:"bucket"`
+    AccessKey string `json:"access_key" mapstructure:"access_key"`
+    SecretKey string `json:"secret_key" mapstructure:"secret_key"`
+    UseSSL    bool   `json:"use_ssl" mapstructure:"use_ssl"`
+    BasePath  string `json:"base_path" mapstructure:"base_path"`
 }
 
 type FrameExtractTask struct {
-    ID         string `json:"id"`
-    RtspURL    string `json:"rtsp_url"`
-    IntervalMs int    `json:"interval_ms"`
-    OutputPath string `json:"output_path"`
-    Enabled    bool   `json:"enabled"` // task running state
+    ID         string `json:"id" mapstructure:"id"`
+    RtspURL    string `json:"rtsp_url" mapstructure:"rtsp_url"`
+    IntervalMs int    `json:"interval_ms" mapstructure:"interval_ms"`
+    OutputPath string `json:"output_path" mapstructure:"output_path"`
+    Enabled    bool   `json:"enabled" mapstructure:"enabled"` // task running state
 }
 type RecordConfig struct {
 	EnableFlv            bool   `json:"enable_flv"`

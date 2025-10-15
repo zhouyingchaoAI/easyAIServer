@@ -67,7 +67,14 @@ func registerApp(g gin.IRouter) {
 			c.JSON(500, gin.H{"error": "service not ready"})
 			return
 		}
-		c.JSON(200, fx.GetConfig())
+		cfg := fx.GetConfig()
+		slog.Info("returning config", 
+			slog.Bool("enable", cfg.Enable),
+			slog.String("store", cfg.Store),
+			slog.Int("interval_ms", cfg.IntervalMs),
+			slog.String("minio_endpoint", cfg.MinIO.Endpoint),
+			slog.String("minio_bucket", cfg.MinIO.Bucket))
+		c.JSON(200, cfg)
 	})
 	// update config
 	fem.POST("/config", func(c *gin.Context) {

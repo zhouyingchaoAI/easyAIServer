@@ -196,17 +196,16 @@ output_dir = './snapshots'
 store = 'local' # local|minio
 
 [frame_extractor.minio]
-endpoint = ''
-bucket = ''
-access_key = ''
-secret_key = ''
+endpoint = '10.1.6.230:9000'
+bucket = 'images'
+access_key = 'admin'
+secret_key = 'admin123'
 use_ssl = false
 base_path = ''
 
-# Optional predefined tasks. You can manage tasks via API later.
 [[frame_extractor.tasks]]
-id = 'cam1'
-rtsp_url = ''
-interval_ms = 1000
-output_path = 'cam1'
-enabled = false
+id = '客流分析1'
+rtsp_url = 'rtsp://127.0.0.1:15544/live/stream_1'
+interval_ms = 5000
+output_path = '客流分析1'
+enabled = true

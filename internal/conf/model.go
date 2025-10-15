@@ -119,30 +119,30 @@ type StaticRelayPullConfig struct {
 }
 
 type Bootstrap struct {
-	LanIP                 string
-	Debug                 bool   `toml:"-" json:"-"`
-	BuildVersion          string `toml:"-" json:"-"`
-	DaemonAddr            string
-	Base                  Base     //基础配置
-	Data                  Database // 数据
-	BaseLog               BaseLog  // 日志
-	DefaultHttpConfig     DefaultHttpConfig
-	GopCacheConfig        GopCacheConfig        `json:"gop_cache_config"`
-	HlsConfig             HlsConfig             `json:"hls"`
-	HttpApiConfig         HttpApiConfig         `json:"http_api"`
-	HttpflvConfig         HttpflvConfig         `json:"httpflv"`
-	HttpFmp4Config        HttpFmp4Config        `json:"httpfmp4"`
-	HttptsConfig          HttptsConfig          `json:"httpts"`
-	InSessionConfig       InSessionConfig       `json:"in_session"`
-	LogConfig             nazalog.Option        `json:"log"`
-	RecordConfig          RecordConfig          `json:"record"`
-	RelayPushConfig       RelayPushConfig       `json:"relay_push"`
-	RoomConfig            RoomConfig            `json:"room"`
-	RtcConfig             RtcConfig             `json:"rtc"`
-	RtmpConfig            RtmpConfig            `json:"rtmp"`
-	VodConfig             VodConfig             `json:"vod"`
-	RtspConfig            RtspConfig            `json:"rtsp"`
-	SrtConfig             config.SrtConfig      `json:"srt"`
+	LanIP                 string                `mapstructure:"lanip"`
+	Debug                 bool                  `toml:"-" json:"-"`
+	BuildVersion          string                `toml:"-" json:"-"`
+	DaemonAddr            string                `mapstructure:"daemonaddr"`
+	Base                  Base                  `mapstructure:"base"` //基础配置
+	Data                  Database              `mapstructure:"data"` // 数据
+	BaseLog               BaseLog               `mapstructure:"baselog"` // 日志
+	DefaultHttpConfig     DefaultHttpConfig     `mapstructure:"defaulthttpconfig"`
+	GopCacheConfig        GopCacheConfig        `json:"gop_cache_config" mapstructure:"gopcacheconfig"`
+	HlsConfig             HlsConfig             `json:"hls" mapstructure:"hlsconfig"`
+	HttpApiConfig         HttpApiConfig         `json:"http_api" mapstructure:"httpapiconfig"`
+	HttpflvConfig         HttpflvConfig         `json:"httpflv" mapstructure:"httpflvconfig"`
+	HttpFmp4Config        HttpFmp4Config        `json:"httpfmp4" mapstructure:"httpfmp4config"`
+	HttptsConfig          HttptsConfig          `json:"httpts" mapstructure:"httptsconfig"`
+	InSessionConfig       InSessionConfig       `json:"in_session" mapstructure:"insessionconfig"`
+	LogConfig             nazalog.Option        `json:"log" mapstructure:"log"`
+	RecordConfig          RecordConfig          `json:"record" mapstructure:"recordconfig"`
+	RelayPushConfig       RelayPushConfig       `json:"relay_push" mapstructure:"relaypushconfig"`
+	RoomConfig            RoomConfig            `json:"room" mapstructure:"roomconfig"`
+	RtcConfig             RtcConfig             `json:"rtc" mapstructure:"rtcconfig"`
+	RtmpConfig            RtmpConfig            `json:"rtmp" mapstructure:"rtmpconfig"`
+	VodConfig             VodConfig             `json:"vod" mapstructure:"vodconfig"`
+	RtspConfig            RtspConfig            `json:"rtsp" mapstructure:"rtspconfig"`
+	SrtConfig             config.SrtConfig      `json:"srt" mapstructure:"srtconfig"`
 	StaticRelayPullConfig StaticRelayPullConfig `json:"static_relay_pull" mapstructure:"staticrelaypull"`
 	LalConfig             LalConfig             `json:"lal" mapstructure:"lalconfig"` // LalConfig对应的config.toml中则需要是 lalconfig 选项
 

@@ -34,7 +34,7 @@ export default {
   },
   getPlayUrl(id){
     return request({
-        url: `/live/play/url/${id}`,
+        url: `/live/playurl/${id}`,
         method: 'get',
     });
   },

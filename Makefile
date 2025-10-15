@@ -44,6 +44,37 @@ fx-enable:
 	sed -i 's/^enable\s*=\s*false/enable = true/' configs/config.toml
 	@echo "frame_extractor.enable set to true"
 
+# --- AI Analysis helpers ---
+# Enable AI analysis module in configs/config.toml
+ai-enable:
+	sed -i '/\[ai_analysis\]/,/^$$/ s/^enable\s*=\s*false/enable = true/' configs/config.toml
+	@echo "ai_analysis.enable set to true"
+
+# Start example algorithm service
+# Usage: make ai-start-algo [PORT=8000 TYPES="人数统计"]
+ai-start-algo:
+	@PORT=$${PORT:-8000}; \
+	TYPES=$${TYPES:-人数统计}; \
+	echo "Starting algorithm service on port $$PORT..."; \
+	python3 examples/algorithm_service.py \
+	  --service-id demo_algo_$$PORT \
+	  --name "演示算法服务" \
+	  --task-types $$TYPES \
+	  --port $$PORT \
+	  --easydarwin http://localhost:5066
+
+# Test AI analysis with algorithm service
+# Usage: make ai-test
+ai-test:
+	@echo "Testing AI Analysis..."
+	@echo "1. Checking algorithm services..."
+	@curl -s http://localhost:5066/api/v1/ai_analysis/services | jq '.total // 0'
+	@echo "2. Checking alerts..."
+	@curl -s http://localhost:5066/api/v1/alerts | jq '.total // 0'
+	@echo "3. Access UI:"
+	@echo "   Alerts: http://localhost:5066/#/alerts"
+	@echo "   Services: http://localhost:5066/#/ai-services"
+
 # Add a frame extractor task via API
 # Usage: make fx-add ID=cam1 RTSP=rtsp://user:pass@ip:554/... INTERVAL=1000 OUT=cam1 SERVER=127.0.0.1:10086
 fx-add:

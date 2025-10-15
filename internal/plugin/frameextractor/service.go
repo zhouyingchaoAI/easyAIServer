@@ -172,40 +172,48 @@ func (s *Service) AddTask(t conf.FrameExtractTask) error {
 // RemoveTask stops and removes a task by id
 func (s *Service) RemoveTask(id string) bool {
     s.mu.Lock()
-    ch, ok := s.taskStops[id]
+    ch, running := s.taskStops[id]
     var removedTask *conf.FrameExtractTask
-    if ok {
+    
+    // stop task if running
+    if running {
         close(ch)
         delete(s.taskStops, id)
     }
-    // remove from cfg slice and keep reference for minio cleanup
-    if ok {
-        tasks := s.cfg.Tasks[:0]
-        for _, it := range s.cfg.Tasks {
-            if it.ID != id {
-                tasks = append(tasks, it)
-            } else {
-                removedTask = &it
-            }
+    
+    // remove from cfg slice regardless of running state
+    tasks := s.cfg.Tasks[:0]
+    found := false
+    for _, it := range s.cfg.Tasks {
+        if it.ID != id {
+            tasks = append(tasks, it)
+        } else {
+            removedTask = &it
+            found = true
         }
-        s.cfg.Tasks = tasks
     }
+    s.cfg.Tasks = tasks
     s.mu.Unlock()
     
+    if !found {
+        s.log.Warn("task not found for removal", slog.String("task", id))
+        return false
+    }
+    
     // delete minio path if store is minio
-    if ok && removedTask != nil && s.cfg.Store == "minio" && s.minio != nil {
+    if removedTask != nil && s.cfg.Store == "minio" && s.minio != nil {
         if err := s.deleteMinioPath(*removedTask); err != nil {
             s.log.Warn("failed to delete minio path", slog.String("task", id), slog.String("err", err.Error()))
         }
     }
     
     // persist to config file
-    if ok {
-        if err := s.saveConfigToFile(s.configPath); err != nil {
-            s.log.Warn("failed to persist config", slog.String("err", err.Error()))
-        }
+    if err := s.saveConfigToFile(s.configPath); err != nil {
+        s.log.Warn("failed to persist config", slog.String("err", err.Error()))
     }
-    return ok
+    
+    s.log.Info("task removed", slog.String("task", id), slog.Bool("was_running", running))
+    return true
 }
 
 // ListTasks returns current tasks

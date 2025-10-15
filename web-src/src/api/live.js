@@ -32,6 +32,12 @@ export default {
         method: 'get',
     });
   },
+  getPlayUrl(id){
+    return request({
+        url: `/live/play/url/${id}`,
+        method: 'get',
+    });
+  },
   postLive(t,data){
     return request({
         url: `/live/${t}`,

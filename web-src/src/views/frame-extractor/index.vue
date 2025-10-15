@@ -200,8 +200,9 @@
                   v-model:value="form.rtsp_url" 
                   :options="rtspOptions"
                   size="large" 
-                  placeholder="输入或从直播流列表选择"
+                  placeholder="选择直播流或输入RTSP地址"
                   :filter-option="filterRtspOption"
+                  @select="onStreamSelect"
                 >
                   <template #prefix><LinkOutlined /></template>
                 </a-auto-complete>
@@ -454,14 +455,16 @@ const fetchLiveStreams = async () => {
   try {
     const { data } = await live.getLiveList({})
     liveStreams.value = data?.items || []
-    // build rtsp options for autocomplete
+    // build stream ID options for selection
     rtspOptions.value = liveStreams.value.map(stream => {
-      const url = stream.rtsp_url || stream.url || ''
+      const streamName = stream.name || `Stream ${stream.id}`
       return {
-        value: url,
-        label: `${stream.stream_id || stream.id || ''} - ${url}`
+        value: String(stream.id), // store stream ID as value
+        label: `${streamName} (ID: ${stream.id})`,
+        streamId: stream.id,
+        streamName: streamName
       }
-    }).filter(opt => opt.value)
+    })
     console.log('loaded live streams:', rtspOptions.value.length)
   } catch (e) {
     console.error('fetch live streams failed', e)
@@ -470,6 +473,40 @@ const fetchLiveStreams = async () => {
 
 const filterRtspOption = (input, option) => {
   return option.label.toLowerCase().includes(input.toLowerCase())
+}
+
+const onStreamSelect = async (streamId, option) => {
+  // if user manually typed an rtsp:// URL, keep it as is
+  if (streamId && streamId.startsWith('rtsp://')) {
+    return
+  }
+  
+  // otherwise, treat it as stream ID and fetch play URL
+  try {
+    const id = parseInt(streamId)
+    if (!id) {
+      form.value.rtsp_url = '' // clear invalid input
+      return
+    }
+    
+    // show loading state
+    const originalValue = form.value.rtsp_url
+    form.value.rtsp_url = '获取播放地址中...'
+    
+    const { data } = await live.getPlayUrl(id)
+    if (data?.info?.RTSP) {
+      form.value.rtsp_url = data.info.RTSP
+      console.log('selected stream RTSP URL:', data.info.RTSP)
+      message.success(`已选择: ${option.streamName}`)
+    } else {
+      form.value.rtsp_url = originalValue
+      message.error('未获取到RTSP播放地址')
+    }
+  } catch (e) {
+    console.error('get play url failed', e)
+    form.value.rtsp_url = ''
+    message.error('获取播放地址失败: ' + (e?.response?.data?.error || e.message))
+  }
 }
 
 const fetchList = async () => {

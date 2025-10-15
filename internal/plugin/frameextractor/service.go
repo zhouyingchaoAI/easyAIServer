@@ -5,11 +5,13 @@ import (
     "errors"
     "easydarwin/internal/conf"
     "easydarwin/utils/pkg/system"
+    "fmt"
     "log/slog"
     "os"
     "path/filepath"
     "strings"
     "sync"
+    "time"
 )
 
 type Service struct {
@@ -106,12 +108,24 @@ func getIntervalMs(t conf.FrameExtractTask, c *conf.FrameExtractorConfig) int {
 func (s *Service) startTask(t conf.FrameExtractTask) error {
     s.mu.Lock()
     defer s.mu.Unlock()
+    
+    // skip if already running
     if _, ok := s.taskStops[t.ID]; ok {
         return nil
     }
+    
+    // skip if not enabled
+    if !t.Enabled {
+        s.log.Info("task disabled, skipping", slog.String("task", t.ID))
+        return nil
+    }
+    
     done := make(chan struct{})
     s.taskStops[t.ID] = done
     s.wg.Add(1)
+    
+    s.log.Info("starting task", slog.String("task", t.ID), slog.String("rtsp", t.RtspURL), slog.Int("interval_ms", getIntervalMs(t, s.cfg)))
+    
     if s.cfg.Store == "local" {
         go s.runLocalSinkLoopCtx(t, done)
     } else if s.cfg.Store == "minio" {
@@ -129,6 +143,12 @@ func (s *Service) AddTask(t conf.FrameExtractTask) error {
     }
     // stop existing
     s.RemoveTask(t.ID)
+    
+    // default to enabled
+    if t.Enabled == false {
+        t.Enabled = true
+    }
+    
     // record into cfg
     s.cfg.Tasks = append(s.cfg.Tasks, t)
     
@@ -226,6 +246,113 @@ func (s *Service) UpdateConfig(newCfg *conf.FrameExtractorConfig) error {
         s.log.Warn("failed to persist config", slog.String("err", err.Error()))
     }
     return nil
+}
+
+// StartTaskByID starts a stopped task
+func (s *Service) StartTaskByID(id string) error {
+    s.mu.Lock()
+    var task *conf.FrameExtractTask
+    for i := range s.cfg.Tasks {
+        if s.cfg.Tasks[i].ID == id {
+            task = &s.cfg.Tasks[i]
+            break
+        }
+    }
+    s.mu.Unlock()
+    
+    if task == nil {
+        return fmt.Errorf("task not found")
+    }
+    
+    // update enabled state
+    s.mu.Lock()
+    task.Enabled = true
+    s.mu.Unlock()
+    
+    // persist
+    if err := s.saveConfigToFile(s.configPath); err != nil {
+        s.log.Warn("failed to persist config", slog.String("err", err.Error()))
+    }
+    
+    return s.startTask(*task)
+}
+
+// StopTaskByID stops a running task
+func (s *Service) StopTaskByID(id string) error {
+    s.mu.Lock()
+    ch, ok := s.taskStops[id]
+    if ok {
+        close(ch)
+        delete(s.taskStops, id)
+    }
+    // update enabled state
+    for i := range s.cfg.Tasks {
+        if s.cfg.Tasks[i].ID == id {
+            s.cfg.Tasks[i].Enabled = false
+            break
+        }
+    }
+    s.mu.Unlock()
+    
+    // persist
+    if ok {
+        if err := s.saveConfigToFile(s.configPath); err != nil {
+            s.log.Warn("failed to persist config", slog.String("err", err.Error()))
+        }
+    }
+    
+    if !ok {
+        return fmt.Errorf("task not running")
+    }
+    return nil
+}
+
+// UpdateTaskInterval updates interval and restarts if running
+func (s *Service) UpdateTaskInterval(id string, intervalMs int) error {
+    if intervalMs < 200 {
+        return fmt.Errorf("interval too small")
+    }
+    
+    s.mu.Lock()
+    var task *conf.FrameExtractTask
+    wasRunning := false
+    if _, ok := s.taskStops[id]; ok {
+        wasRunning = true
+    }
+    for i := range s.cfg.Tasks {
+        if s.cfg.Tasks[i].ID == id {
+            s.cfg.Tasks[i].IntervalMs = intervalMs
+            task = &s.cfg.Tasks[i]
+            break
+        }
+    }
+    s.mu.Unlock()
+    
+    if task == nil {
+        return fmt.Errorf("task not found")
+    }
+    
+    // persist
+    if err := s.saveConfigToFile(s.configPath); err != nil {
+        s.log.Warn("failed to persist config", slog.String("err", err.Error()))
+    }
+    
+    // restart if was running
+    if wasRunning {
+        _ = s.StopTaskByID(id)
+        time.Sleep(100 * time.Millisecond)
+        return s.StartTaskByID(id)
+    }
+    
+    return nil
+}
+
+// GetTaskStatus returns current running status
+func (s *Service) GetTaskStatus(id string) bool {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    _, ok := s.taskStops[id]
+    return ok
 }
 
 // global accessor for API layer

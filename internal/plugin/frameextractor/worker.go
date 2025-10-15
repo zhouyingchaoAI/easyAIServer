@@ -153,6 +153,12 @@ func (s *Service) runLocalSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
         cmd := exec.Command(ff, args...)
         var stderr bytes.Buffer
         cmd.Stderr = &stderr
+        
+        s.log.Info("starting ffmpeg", 
+            slog.String("task", task.ID), 
+            slog.String("output_dir", dir),
+            slog.String("ffmpeg", ff),
+            slog.String("cmd", strings.Join(args, " ")))
 
         if err := cmd.Start(); err != nil {
             s.log.Error("start ffmpeg failed", slog.String("task", task.ID), slog.String("err", err.Error()))

@@ -153,6 +153,66 @@ func registerApp(g gin.IRouter) {
 		}
 		c.JSON(200, gin.H{"ok": true})
 	})
+	// start a task
+	fem.POST("/tasks/:id/start", func(c *gin.Context) {
+		id := c.Param("id")
+		fx := frameextractor.GetGlobal()
+		if fx == nil {
+			c.JSON(500, gin.H{"error": "service not ready"})
+			return
+		}
+		if err := fx.StartTaskByID(id); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"ok": true})
+	})
+	// stop a task
+	fem.POST("/tasks/:id/stop", func(c *gin.Context) {
+		id := c.Param("id")
+		fx := frameextractor.GetGlobal()
+		if fx == nil {
+			c.JSON(500, gin.H{"error": "service not ready"})
+			return
+		}
+		if err := fx.StopTaskByID(id); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"ok": true})
+	})
+	// update task interval
+	fem.PUT("/tasks/:id/interval", func(c *gin.Context) {
+		id := c.Param("id")
+		var req struct {
+			IntervalMs int `json:"interval_ms"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		fx := frameextractor.GetGlobal()
+		if fx == nil {
+			c.JSON(500, gin.H{"error": "service not ready"})
+			return
+		}
+		if err := fx.UpdateTaskInterval(id, req.IntervalMs); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"ok": true})
+	})
+	// get task status
+	fem.GET("/tasks/:id/status", func(c *gin.Context) {
+		id := c.Param("id")
+		fx := frameextractor.GetGlobal()
+		if fx == nil {
+			c.JSON(500, gin.H{"error": "service not ready"})
+			return
+		}
+		running := fx.GetTaskStatus(id)
+		c.JSON(200, gin.H{"running": running})
+	})
 }
 
 func registerLiveStream(r gin.IRouter) {

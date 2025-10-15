@@ -197,11 +197,16 @@
         :columns="columns" 
         row-key="id" 
         :pagination="{ pageSize: 10, showTotal: (total) => `共 ${total} 条` }"
-        :scroll="{ x: 800 }"
+        :scroll="{ x: 1200 }"
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.key==='id'">
             <a-tag color="blue">{{ record.id }}</a-tag>
+          </template>
+          <template v-else-if="column.key==='status'">
+            <a-tag :color="record.enabled ? 'green' : 'default'">
+              {{ record.enabled ? '运行中' : '已停止' }}
+            </a-tag>
           </template>
           <template v-else-if="column.key==='rtsp_url'">
             <a-tooltip :title="record.rtsp_url">
@@ -209,7 +214,30 @@
             </a-tooltip>
           </template>
           <template v-else-if="column.key==='interval_ms'">
-            <a-tag color="green">{{ record.interval_ms }}ms</a-tag>
+            <a-popover trigger="click" placement="bottom">
+              <template #content>
+                <div style="width: 200px;">
+                  <a-input-number 
+                    v-model:value="editingInterval[record.id]" 
+                    :min="200" 
+                    :step="100" 
+                    style="width: 100%; margin-bottom: 8px;"
+                    placeholder="新间隔(ms)"
+                  />
+                  <a-button 
+                    type="primary" 
+                    size="small" 
+                    block 
+                    @click="() => onUpdateInterval(record)"
+                  >
+                    确认修改
+                  </a-button>
+                </div>
+              </template>
+              <a-tag color="green" style="cursor: pointer;">
+                {{ record.interval_ms }}ms <EditOutlined style="font-size: 10px;" />
+              </a-tag>
+            </a-popover>
           </template>
           <template v-else-if="column.key==='output_path'">
             <span>
@@ -218,6 +246,19 @@
           </template>
           <template v-else-if="column.key==='action'">
             <a-space>
+              <a-tooltip :title="record.enabled ? '停止抽帧' : '启动抽帧'">
+                <a-button 
+                  :type="record.enabled ? 'default' : 'primary'"
+                  size="small" 
+                  @click="() => record.enabled ? onStopTask(record.id) : onStartTask(record.id)"
+                  :loading="taskActionLoading[record.id]"
+                >
+                  <template #icon>
+                    <PauseCircleOutlined v-if="record.enabled" />
+                    <PlayCircleOutlined v-else />
+                  </template>
+                </a-button>
+              </a-tooltip>
               <a-tooltip title="查看快照">
                 <a-button type="default" size="small" @click="() => goToTaskGallery(record.id)">
                   <template #icon><PictureOutlined /></template>
@@ -268,7 +309,7 @@ import {
   FolderOutlined, FolderOpenOutlined, ApiOutlined, InboxOutlined,
   KeyOutlined, LockOutlined, SaveOutlined, VideoCameraOutlined,
   TagOutlined, LinkOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
-  PictureOutlined
+  PictureOutlined, PlayCircleOutlined, PauseCircleOutlined
 } from '@ant-design/icons-vue'
 import { frameApi } from '@/api'
 
@@ -293,13 +334,16 @@ const form = ref({ id: '', rtsp_url: '', interval_ms: 1000, output_path: '' })
 const loading = ref(false)
 const configLoading = ref(false)
 const items = ref([])
+const taskActionLoading = ref({})
+const editingInterval = ref({})
 
 const columns = [
   { title: '任务ID', key: 'id', width: 120 },
+  { title: '状态', key: 'status', width: 100 },
   { title: 'RTSP地址', key: 'rtsp_url', ellipsis: true },
-  { title: '间隔', key: 'interval_ms', width: 100 },
+  { title: '间隔', key: 'interval_ms', width: 150 },
   { title: '输出路径', key: 'output_path', width: 150 },
-  { title: '操作', key: 'action', width: 180, fixed: 'right' },
+  { title: '操作', key: 'action', width: 280, fixed: 'right' },
 ]
 
 const fetchConfig = async () => {
@@ -385,6 +429,48 @@ const goToGallery = () => {
 
 const goToTaskGallery = (taskId) => {
   router.push({ path: '/frame-extractor/gallery', query: { task: taskId } })
+}
+
+const onStartTask = async (id) => {
+  taskActionLoading.value[id] = true
+  try {
+    await frameApi.startTask(id)
+    message.success('任务已启动')
+    await fetchList()
+  } catch (e) {
+    message.error(e?.response?.data?.error || '启动失败')
+  } finally {
+    taskActionLoading.value[id] = false
+  }
+}
+
+const onStopTask = async (id) => {
+  taskActionLoading.value[id] = true
+  try {
+    await frameApi.stopTask(id)
+    message.success('任务已停止')
+    await fetchList()
+  } catch (e) {
+    message.error(e?.response?.data?.error || '停止失败')
+  } finally {
+    taskActionLoading.value[id] = false
+  }
+}
+
+const onUpdateInterval = async (record) => {
+  const newInterval = editingInterval.value[record.id] || record.interval_ms
+  if (newInterval < 200) {
+    message.error('间隔不能小于200ms')
+    return
+  }
+  try {
+    await frameApi.updateInterval(record.id, newInterval)
+    message.success('间隔已更新' + (record.enabled ? '，任务已重启' : ''))
+    await fetchList()
+    delete editingInterval.value[record.id]
+  } catch (e) {
+    message.error(e?.response?.data?.error || '更新失败')
+  }
 }
 
 onMounted(() => {

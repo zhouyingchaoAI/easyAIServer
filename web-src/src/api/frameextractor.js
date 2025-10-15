@@ -15,6 +15,18 @@ export default {
   delTask(id){
     return request({ url: `/frame_extractor/tasks/${id}`, method: 'delete' });
   },
+  startTask(id){
+    return request({ url: `/frame_extractor/tasks/${id}/start`, method: 'post' });
+  },
+  stopTask(id){
+    return request({ url: `/frame_extractor/tasks/${id}/stop`, method: 'post' });
+  },
+  updateInterval(id, intervalMs){
+    return request({ url: `/frame_extractor/tasks/${id}/interval`, method: 'put', data: { interval_ms: intervalMs } });
+  },
+  getStatus(id){
+    return request({ url: `/frame_extractor/tasks/${id}/status`, method: 'get' });
+  },
   listSnapshots(taskId){
     return request({ url: `/frame_extractor/snapshots/${taskId}`, method: 'get' });
   },

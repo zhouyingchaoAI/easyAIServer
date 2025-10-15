@@ -313,6 +313,7 @@ type FrameExtractTask struct {
     RtspURL    string `json:"rtsp_url"`
     IntervalMs int    `json:"interval_ms"`
     OutputPath string `json:"output_path"`
+    Enabled    bool   `json:"enabled"` // task running state
 }
 type RecordConfig struct {
 	EnableFlv            bool   `json:"enable_flv"`

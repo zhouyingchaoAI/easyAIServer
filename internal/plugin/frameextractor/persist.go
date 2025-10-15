@@ -125,6 +125,7 @@ func (s *Service) buildTaskLines() []string {
 		lines = append(lines, fmt.Sprintf("rtsp_url = '%s'", t.RtspURL))
 		lines = append(lines, fmt.Sprintf("interval_ms = %d", t.IntervalMs))
 		lines = append(lines, fmt.Sprintf("output_path = '%s'", t.OutputPath))
+		lines = append(lines, fmt.Sprintf("enabled = %t", t.Enabled))
 	}
 	return lines
 }

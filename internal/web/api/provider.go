@@ -95,6 +95,9 @@ func NewHTTPHandler(uc *conf.Bootstrap) http.Handler {
 	//快照
 	snapDir := filepath.Join(dir, "snap")
 	g.Use(static.Serve("/snap", static.LocalFile(snapDir, true)))
+	//抽帧快照
+	snapshotsDir := filepath.Join(dir, "snapshots")
+	g.Use(static.Serve("/snapshots", static.LocalFile(snapshotsDir, true)))
 
 	// 处理未找到路由的情况，返回 JSON 格式的 404 错误信息
 	g.NoRoute(func(c *gin.Context) {

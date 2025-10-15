@@ -58,6 +58,26 @@ const RootRoute = {
       },
     },
     {
+      path: '/frame-extractor',
+      name: 'FrameExtractor',
+      component: () => import('@/views/frame-extractor/index.vue'),
+      meta: {
+        title: '抽帧管理',
+        icon: 'mdi:camera',
+        namePath: ['FrameExtractor'],
+      },
+    },
+    {
+      path: '/frame-extractor/gallery',
+      name: 'FrameGallery',
+      component: () => import('@/views/frame-extractor/gallery.vue'),
+      meta: {
+        title: '抽帧结果',
+        icon: 'mdi:image-multiple',
+        namePath: ['FrameGallery'],
+      },
+    },
+    {
       path: '/apidoc.html',
       name: 'Apidoc',
       component: () => import('@/views/apidoc/index.vue'),

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"easydarwin/lnton/pkg/orm"
-	"easydarwin/lnton/pkg/web"
+	"easydarwin/utils/pkg/orm"
+	"easydarwin/utils/pkg/web"
 	"github.com/redis/go-redis/v9"
 )
 

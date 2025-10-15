@@ -3,7 +3,7 @@ package record
 import (
 	"time"
 
-	"easydarwin/lnton/pkg/orm"
+	"easydarwin/utils/pkg/orm"
 	"gorm.io/gorm"
 )
 

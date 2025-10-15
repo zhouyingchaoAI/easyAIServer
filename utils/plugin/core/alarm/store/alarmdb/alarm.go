@@ -3,7 +3,7 @@ package alarmdb
 import (
 	"time"
 
-	"easydarwin/lnton/plugin/core/alarm"
+	"easydarwin/utils/plugin/core/alarm"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

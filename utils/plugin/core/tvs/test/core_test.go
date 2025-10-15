@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"easydarwin/lnton/pkg/orm"
-	"easydarwin/lnton/plugin/core/tvs"
-	"easydarwin/lnton/plugin/core/tvs/store/tvdb"
+	"easydarwin/utils/pkg/orm"
+	"easydarwin/utils/plugin/core/tvs"
+	"easydarwin/utils/plugin/core/tvs/store/tvdb"
 	"gorm.io/driver/postgres"
 )
 

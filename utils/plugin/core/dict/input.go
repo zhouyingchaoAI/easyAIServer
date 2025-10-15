@@ -1,6 +1,6 @@
 package dict
 
-import "easydarwin/lnton/pkg/web"
+import "easydarwin/utils/pkg/web"
 
 // AddDictTypeInput 创建字典类型
 type AddDictTypeInput struct {

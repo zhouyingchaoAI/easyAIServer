@@ -1,7 +1,7 @@
 package versiondb
 
 import (
-	"easydarwin/lnton/plugin/core/version"
+	"easydarwin/utils/plugin/core/version"
 	"gorm.io/gorm"
 )
 

@@ -5,8 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"easydarwin/lnton/plugin/core/log"
-	"easydarwin/lnton/plugin/core/log/store/logdb"
+	"easydarwin/utils/plugin/core/log"
+	"easydarwin/utils/plugin/core/log/store/logdb"
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"

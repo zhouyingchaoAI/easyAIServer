@@ -1,7 +1,7 @@
 package msgpushdb
 
 import (
-	"easydarwin/lnton/plugin/core/msgpush"
+	"easydarwin/utils/plugin/core/msgpush"
 	"gorm.io/gorm"
 )
 

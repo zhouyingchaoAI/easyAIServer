@@ -1,8 +1,8 @@
 package plugin
 
 import (
-	"easydarwin/lnton/pkg/web"
-	"easydarwin/lnton/plugin/core/dict"
+	"easydarwin/utils/pkg/web"
+	"easydarwin/utils/plugin/core/dict"
 	"github.com/gin-gonic/gin"
 )
 

@@ -3,8 +3,8 @@ package alarm
 import (
 	"errors"
 
-	"easydarwin/lnton/pkg/orm"
-	"easydarwin/lnton/pkg/web"
+	"easydarwin/utils/pkg/orm"
+	"easydarwin/utils/pkg/web"
 	"gorm.io/gorm"
 )
 

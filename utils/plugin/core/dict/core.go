@@ -5,11 +5,11 @@ import (
 	"log/slog"
 	"strings"
 
-	"easydarwin/lnton/pkg/conc"
+	"easydarwin/utils/pkg/conc"
 
-	"easydarwin/lnton/pkg/fn"
-	"easydarwin/lnton/pkg/orm"
-	"easydarwin/lnton/pkg/web"
+	"easydarwin/utils/pkg/fn"
+	"easydarwin/utils/pkg/orm"
+	"easydarwin/utils/pkg/web"
 )
 
 type TypeStorer interface {

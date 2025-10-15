@@ -1,6 +1,6 @@
 package msgpush
 
-import "easydarwin/lnton/pkg/orm"
+import "easydarwin/utils/pkg/orm"
 
 type MsgPush struct {
 	ID        string   `gorm:"primaryKey" json:"id"`

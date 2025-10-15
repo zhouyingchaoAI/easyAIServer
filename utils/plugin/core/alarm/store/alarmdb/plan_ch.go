@@ -1,8 +1,8 @@
 package alarmdb
 
 import (
-	"easydarwin/lnton/pkg/orm"
-	"easydarwin/lnton/plugin/core/alarm"
+	"easydarwin/utils/pkg/orm"
+	"easydarwin/utils/plugin/core/alarm"
 )
 
 // GetAlarmPlanCh

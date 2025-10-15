@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"easydarwin/lnton/pkg/web"
+	"easydarwin/utils/pkg/web"
 )
 
 type Storer interface {

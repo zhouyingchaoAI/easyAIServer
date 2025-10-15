@@ -1,10 +1,10 @@
 package msgpushapi
 
 import (
-	"easydarwin/lnton/pkg/orm"
-	"easydarwin/lnton/pkg/web"
-	"easydarwin/lnton/plugin/core/msgpush"
-	"easydarwin/lnton/plugin/core/msgpush/store/msgpushdb"
+	"easydarwin/utils/pkg/orm"
+	"easydarwin/utils/pkg/web"
+	"easydarwin/utils/plugin/core/msgpush"
+	"easydarwin/utils/plugin/core/msgpush/store/msgpushdb"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"time"

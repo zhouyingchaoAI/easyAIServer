@@ -1,8 +1,8 @@
 package plugin
 
 import (
-	"easydarwin/lnton/pkg/web"
-	"easydarwin/lnton/plugin/core/alarm"
+	"easydarwin/utils/pkg/web"
+	"easydarwin/utils/plugin/core/alarm"
 	"github.com/gin-gonic/gin"
 	"os"
 	"path"

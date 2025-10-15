@@ -3,8 +3,8 @@ package recorddb
 import (
 	"time"
 
-	"easydarwin/lnton/pkg/orm"
-	"easydarwin/lnton/rms/core/record"
+	"easydarwin/utils/pkg/orm"
+	"easydarwin/utils/rms/core/record"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

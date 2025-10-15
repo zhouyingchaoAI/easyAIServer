@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"easydarwin/lnton/rms/core/record"
+	"easydarwin/utils/rms/core/record"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )

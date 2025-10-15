@@ -22,7 +22,7 @@ maxopenconns = 1
 slowthreshold = 200
 
 [defaulthttpconfig]
-httplistenaddr = ':10086'
+httplistenaddr = ':5066'
 httpscertfile = './configs/cert.pem'
 httpskeyfile = './configs/key.pem'
 httpslistenaddr = ':24434'
@@ -188,3 +188,24 @@ transdefinition = 'sd,hd,fhd'
 transvideo = false
 tranway = 'libx264'
 tranhevcway = 'copy'
+
+[frame_extractor]
+enable = false
+interval_ms = 1000
+output_dir = './snapshots'
+store = 'local' # local|minio
+
+[frame_extractor.minio]
+endpoint = ''
+bucket = ''
+access_key = ''
+secret_key = ''
+use_ssl = false
+base_path = ''
+
+# Optional predefined tasks. You can manage tasks via API later.
+[[frame_extractor.tasks]]
+id = 'cam1'
+rtsp_url = ''
+interval_ms = 1000
+output_path = 'cam1'

@@ -3,8 +3,8 @@ package logdb
 import (
 	"time"
 
-	"easydarwin/lnton/pkg/web"
-	"easydarwin/lnton/plugin/core/log"
+	"easydarwin/utils/pkg/web"
+	"easydarwin/utils/plugin/core/log"
 	"gorm.io/gorm"
 )
 

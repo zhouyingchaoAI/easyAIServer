@@ -3,8 +3,8 @@ package tvsapi
 import (
 	"strings"
 
-	"easydarwin/lnton/pkg/web"
-	"easydarwin/lnton/plugin/core/tvs"
+	"easydarwin/utils/pkg/web"
+	"easydarwin/utils/plugin/core/tvs"
 	"github.com/gin-gonic/gin"
 )
 

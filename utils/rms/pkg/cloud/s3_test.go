@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	m3u8mannager "easydarwin/lnton/rms/pkg/m3u8"
+	m3u8mannager "easydarwin/utils/rms/pkg/m3u8"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 )

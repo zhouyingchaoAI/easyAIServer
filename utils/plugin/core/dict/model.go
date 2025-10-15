@@ -1,7 +1,7 @@
 package dict
 
 import (
-	"easydarwin/lnton/pkg/orm"
+	"easydarwin/utils/pkg/orm"
 	"gorm.io/gorm"
 )
 

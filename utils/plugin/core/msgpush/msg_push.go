@@ -2,7 +2,7 @@ package msgpush
 
 import (
 	"context"
-	"easydarwin/lnton/pkg/orm"
+	"easydarwin/utils/pkg/orm"
 )
 
 // MsgPushStorer Instantiation interface

@@ -18,11 +18,11 @@ import (
 
 	"github.com/goccy/go-json"
 
-	"easydarwin/lnton/pkg/finder"
-	"easydarwin/lnton/pkg/fn"
-	"easydarwin/lnton/pkg/orm"
-	"easydarwin/lnton/pkg/system"
-	m3u8mannager "easydarwin/lnton/rms/pkg/m3u8"
+	"easydarwin/utils/pkg/finder"
+	"easydarwin/utils/pkg/fn"
+	"easydarwin/utils/pkg/orm"
+	"easydarwin/utils/pkg/system"
+	m3u8mannager "easydarwin/utils/rms/pkg/m3u8"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"

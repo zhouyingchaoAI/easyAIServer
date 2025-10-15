@@ -26,6 +26,7 @@ var (
 	gCfg         conf.Bootstrap
 	gLog         *slog.Logger
 	gHttpHandler http.Handler
+	gConfigDir   string // config directory
 	daemonAddr   = flag.String("daemon", "", "")
 )
 
@@ -38,8 +39,8 @@ func getBuildRelease() bool {
 func main() {
 
 	var err error
-	filedir, _ := gutils.Abs(*gutils.ConfigDir)
-	gCfg, err = conf.SetupConfig(filedir)
+	gConfigDir, _ = gutils.Abs(*gutils.ConfigDir)
+	gCfg, err = conf.SetupConfig(gConfigDir)
 	if err != nil {
 		panic(err)
 	}

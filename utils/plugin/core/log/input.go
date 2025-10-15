@@ -1,6 +1,6 @@
 package log
 
-import "easydarwin/lnton/pkg/web"
+import "easydarwin/utils/pkg/web"
 
 // FindLogsInput 日志查询结构
 type FindLogsInput struct {

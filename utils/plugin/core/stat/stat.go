@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"time"
 
-	"easydarwin/lnton/pkg/orm"
+	"easydarwin/utils/pkg/orm"
 	"github.com/shirou/gopsutil/net"
 
 	"github.com/shirou/gopsutil/cpu"

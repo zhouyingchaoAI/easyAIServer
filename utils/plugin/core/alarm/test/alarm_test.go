@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"easydarwin/lnton/pkg/orm"
-	"easydarwin/lnton/plugin/core/alarm"
-	"easydarwin/lnton/plugin/core/alarm/store/alarmdb"
+	"easydarwin/utils/pkg/orm"
+	"easydarwin/utils/plugin/core/alarm"
+	"easydarwin/utils/plugin/core/alarm/store/alarmdb"
 	"github.com/glebarez/sqlite"
 )
 

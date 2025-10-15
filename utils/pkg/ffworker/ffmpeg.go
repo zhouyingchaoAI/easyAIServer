@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"strings"
 
-	"easydarwin/lnton/pkg/system"
+	"easydarwin/utils/pkg/system"
 )
 
 // KeyFrameToJpeg 关键帧转图片

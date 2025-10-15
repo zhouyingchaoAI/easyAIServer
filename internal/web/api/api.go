@@ -8,6 +8,7 @@ package api
 import (
 	"easydarwin/internal/conf"
 	"easydarwin/internal/data"
+    "easydarwin/internal/plugin/frameextractor"
 	"easydarwin/internal/gutils/consts"
 	"easydarwin/utils/pkg/web"
 	"github.com/gin-contrib/static"
@@ -56,6 +57,102 @@ func registerApp(g gin.IRouter) {
 
 	users := g.Group("/users")
 	users.PUT("/:username/reset-password", l.resetPassword)
+
+	// frame extractor manage
+	fem := g.Group("/frame_extractor")
+	// get config
+	fem.GET("/config", func(c *gin.Context) {
+		fx := frameextractor.GetGlobal()
+		if fx == nil {
+			c.JSON(500, gin.H{"error": "service not ready"})
+			return
+		}
+		c.JSON(200, fx.GetConfig())
+	})
+	// update config
+	fem.POST("/config", func(c *gin.Context) {
+		var in conf.FrameExtractorConfig
+		if err := c.ShouldBindJSON(&in); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		fx := frameextractor.GetGlobal()
+		if fx == nil {
+			c.JSON(500, gin.H{"error": "service not ready"})
+			return
+		}
+		if err := fx.UpdateConfig(&in); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"ok": true})
+	})
+    fem.GET("/tasks", func(c *gin.Context) {
+        fx := frameextractor.GetGlobal()
+        if fx == nil {
+            c.JSON(200, gin.H{"items": []any{}, "total": 0})
+            return
+        }
+        tasks := fx.ListTasks()
+        c.JSON(200, gin.H{"items": tasks, "total": len(tasks)})
+    })
+    fem.POST("/tasks", func(c *gin.Context) {
+        var in conf.FrameExtractTask
+        if err := c.ShouldBindJSON(&in); err != nil {
+            c.JSON(400, gin.H{"error": err.Error()})
+            return
+        }
+        fx := frameextractor.GetGlobal()
+        if fx == nil {
+            c.JSON(500, gin.H{"error": "service not ready"})
+            return
+        }
+        if err := fx.AddTask(in); err != nil {
+            c.JSON(400, gin.H{"error": err.Error()})
+            return
+        }
+        c.JSON(200, gin.H{"ok": true})
+    })
+    fem.DELETE("/tasks/:id", func(c *gin.Context) {
+        id := c.Param("id")
+        fx := frameextractor.GetGlobal()
+        if fx == nil {
+            c.JSON(500, gin.H{"error": "service not ready"})
+            return
+        }
+        ok := fx.RemoveTask(id)
+        c.JSON(200, gin.H{"ok": ok})
+    })
+	// list snapshots for a task
+	fem.GET("/snapshots/:task_id", func(c *gin.Context) {
+		taskID := c.Param("task_id")
+		fx := frameextractor.GetGlobal()
+		if fx == nil {
+			c.JSON(500, gin.H{"error": "service not ready"})
+			return
+		}
+		snapshots, err := fx.ListSnapshots(taskID)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"items": snapshots, "total": len(snapshots)})
+	})
+	// delete a snapshot
+	fem.DELETE("/snapshots/:task_id/*path", func(c *gin.Context) {
+		taskID := c.Param("task_id")
+		path := c.Param("path")
+		fx := frameextractor.GetGlobal()
+		if fx == nil {
+			c.JSON(500, gin.H{"error": "service not ready"})
+			return
+		}
+		if err := fx.DeleteSnapshot(taskID, path); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"ok": true})
+	})
 }
 
 func registerLiveStream(r gin.IRouter) {

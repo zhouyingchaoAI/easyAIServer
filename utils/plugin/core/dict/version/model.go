@@ -1,6 +1,6 @@
 package version
 
-import "easydarwin/lnton/pkg/orm"
+import "easydarwin/utils/pkg/orm"
 
 // Version 数据库版本记录
 // 每次迁移，则创建一条记录

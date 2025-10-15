@@ -1,6 +1,6 @@
 package record
 
-import "easydarwin/lnton/pkg/orm"
+import "easydarwin/utils/pkg/orm"
 
 type FindStoragesOutput struct {
 	ID       int    `json:"id,string"`

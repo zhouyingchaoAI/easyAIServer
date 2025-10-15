@@ -30,6 +30,14 @@ func SetupConfig(path string) (Bootstrap, error) {
 		return bc, err
 	}
 
+    // ensure defaults for frame extractor
+    if bc.FrameExtractor.IntervalMs <= 0 {
+        bc.FrameExtractor.IntervalMs = 1000
+    }
+    if bc.FrameExtractor.Store == "" {
+        bc.FrameExtractor.Store = "local"
+    }
+
 	var cfg config.Config
 	var lgcConfig logic.Config
 	SetLogicConfig(bc, &lgcConfig)

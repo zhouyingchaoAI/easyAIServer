@@ -21,6 +21,12 @@ EasyDarwin is licensed under the MIT License.
 + Offline and online monitoring
 + Video on demand functionality
 + RESTful API with apidoc documentation tool (located in the web directory)
++ **🎬 Frame Extractor Plugin**: Extract frames from RTSP streams at configurable intervals
+  - Supports local filesystem and MinIO object storage
+  - Web UI for task management
+  - Auto-reconnect and exponential backoff
+  - Auto-create/delete MinIO paths on task add/remove
+  - Configuration persistence to config.toml
 
 ### Features to be Added
 + User Authentication
@@ -72,6 +78,22 @@ make build/linux
 cd build
 cd EasyDarwin-lin-"version"-"build-time"
 easydarwin
+```
+
+### Frame Extractor Plugin Quick Start
+
+See [Frame Extractor Documentation](doc/FRAME_EXTRACTOR.md) for detailed usage.
+
+```shell
+# Enable plugin
+make fx-enable
+
+# Build and run
+make build/local
+./build/easydarwin -conf ./configs
+
+# Access web UI
+# Open: http://localhost:10086/#/frame-extractor
 ```
 
 ### System Service

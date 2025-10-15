@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"easydarwin/lnton/pkg/system"
+	"easydarwin/utils/pkg/system"
 )
 
 func TestEngine(t *testing.T) {

@@ -1,7 +1,7 @@
 package record
 
 import (
-	"easydarwin/lnton/pkg/web"
+	"easydarwin/utils/pkg/web"
 )
 
 type EditDeviceInput struct {

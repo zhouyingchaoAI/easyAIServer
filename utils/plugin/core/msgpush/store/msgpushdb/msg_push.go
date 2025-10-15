@@ -3,8 +3,8 @@ package msgpushdb
 
 import (
 	"context"
-	"easydarwin/lnton/pkg/orm"
-	"easydarwin/lnton/plugin/core/msgpush"
+	"easydarwin/utils/pkg/orm"
+	"easydarwin/utils/plugin/core/msgpush"
 
 	"gorm.io/gorm"
 )

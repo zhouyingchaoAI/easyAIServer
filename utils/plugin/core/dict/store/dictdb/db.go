@@ -1,8 +1,8 @@
 package dictdb
 
 import (
-	"easydarwin/lnton/pkg/orm"
-	"easydarwin/lnton/plugin/core/dict"
+	"easydarwin/utils/pkg/orm"
+	"easydarwin/utils/plugin/core/dict"
 	"gorm.io/gorm"
 )
 

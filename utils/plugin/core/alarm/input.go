@@ -1,6 +1,6 @@
 package alarm
 
-import "easydarwin/lnton/pkg/web"
+import "easydarwin/utils/pkg/web"
 
 type AddAlarmPlanInput struct {
 	Name           string `json:"name"`

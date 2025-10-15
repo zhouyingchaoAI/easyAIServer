@@ -4,8 +4,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"easydarwin/lnton/pkg/web"
-	"easydarwin/lnton/plugin/core/stat"
+	"easydarwin/utils/pkg/web"
+	"easydarwin/utils/plugin/core/stat"
 	"github.com/gin-gonic/gin"
 )
 

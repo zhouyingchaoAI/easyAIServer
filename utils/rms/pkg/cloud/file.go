@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"easydarwin/lnton/pkg/fn"
+	"easydarwin/utils/pkg/fn"
 	"github.com/grafov/m3u8"
 )
 

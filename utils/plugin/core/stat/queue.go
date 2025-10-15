@@ -3,7 +3,7 @@ package stat
 import (
 	"sync"
 
-	"easydarwin/lnton/pkg/orm"
+	"easydarwin/utils/pkg/orm"
 )
 
 // PercentData 时间百分比

@@ -3,8 +3,8 @@ package plugin
 import (
 	"log/slog"
 
-	"easydarwin/lnton/plugin/core/version"
-	"easydarwin/lnton/plugin/core/version/store/versiondb"
+	"easydarwin/utils/plugin/core/version"
+	"easydarwin/utils/plugin/core/version/store/versiondb"
 	"gorm.io/gorm"
 )
 

@@ -4,7 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 
-	"easydarwin/lnton/pkg/orm"
+	"easydarwin/utils/pkg/orm"
 	"gorm.io/gorm"
 )
 

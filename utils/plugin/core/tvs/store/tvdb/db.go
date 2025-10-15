@@ -1,8 +1,8 @@
 package tvdb
 
 import (
-	"easydarwin/lnton/pkg/orm"
-	"easydarwin/lnton/plugin/core/tvs"
+	"easydarwin/utils/pkg/orm"
+	"easydarwin/utils/plugin/core/tvs"
 	"gorm.io/gorm"
 )
 

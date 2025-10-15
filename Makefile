@@ -1,3 +1,76 @@
+SHELL := /bin/bash
+
+.PHONY: build/linux build/local clean frontend backend fx-enable fx-add fx-check-ffmpeg fx-run-example
+
+# Frontend build (requires Node.js >= 18)
+frontend:
+	cd web-src && \
+	if [ -f package-lock.json ]; then \
+		npm ci; \
+	else \
+		npm install; \
+	fi && \
+	npm run build && \
+	if [ -d web ]; then \
+		rm -rf ../web/* && cp -r web/* ../web/; \
+	elif [ -d dist ]; then \
+		rm -rf ../web/* && cp -r dist/* ../web/; \
+	else \
+		echo "Error: No build output found (checked web/ and dist/)" && exit 1; \
+	fi
+
+# Backend build for current OS/ARCH
+backend:
+	go build -o build/easydarwin ./cmd/server
+
+# Cross-compile for Linux amd64 and package web assets
+build/linux: frontend
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 \
+	go build -o build/easydarwin_linux_amd64 ./cmd/server
+	# bundle ffmpeg if exists in repo root (optional)
+	@if [ -f ffmpeg ]; then cp ffmpeg build/; fi
+	@echo "Build artifacts: build/easydarwin_linux_amd64 and web/ assets"
+
+# Local build (frontend + backend for host platform)
+build/local: frontend backend
+	@echo "Build artifacts: build/easydarwin and web/ assets"
+
+clean:
+	rm -rf build/* web/*
+
+# --- Frame Extractor helpers ---
+# Enable frame extractor module in configs/config.toml
+fx-enable:
+	sed -i 's/^enable\s*=\s*false/enable = true/' configs/config.toml
+	@echo "frame_extractor.enable set to true"
+
+# Add a frame extractor task via API
+# Usage: make fx-add ID=cam1 RTSP=rtsp://user:pass@ip:554/... INTERVAL=1000 OUT=cam1 SERVER=127.0.0.1:10086
+fx-add:
+	@if [ -z "$(ID)" ] || [ -z "$(RTSP)" ]; then \
+		echo "Usage: make fx-add ID=cam1 RTSP=rtsp://... [INTERVAL=1000 OUT=cam1 SERVER=127.0.0.1:10086]"; \
+		exit 1; \
+	fi
+	@SERVER_ADDR=$${SERVER:-127.0.0.1:10086}; \
+	INTERVAL_MS=$${INTERVAL:-1000}; \
+	OUT_PATH=$${OUT:-$(ID)}; \
+	curl -sS -X POST http://$$SERVER_ADDR/api/v1/frame_extractor/tasks \
+	  -H 'Content-Type: application/json' \
+	  -d '{"id":"$(ID)","rtsp_url":"$(RTSP)","interval_ms":'"$$INTERVAL_MS"',"output_path":"'"$$OUT_PATH"'"}' && echo
+
+# Check ffmpeg availability
+fx-check-ffmpeg:
+	@which ffmpeg >/dev/null 2>&1 && echo "ffmpeg found in PATH" || \
+	([ -f ./ffmpeg ] && echo "./ffmpeg present" || (echo "ffmpeg not found. Place binary at ./ffmpeg or install system ffmpeg" && exit 1))
+
+# Run server (current platform), enable plugin, then add a sample task
+# Usage: make fx-run-example RTSP=rtsp://user:pass@ip:554/... [ID=cam1 INTERVAL=1000 OUT=cam1]
+fx-run-example: build/local fx-enable fx-check-ffmpeg
+	@echo "Starting server..."
+	@( ./build/easydarwin -conf ./configs & echo $$! > build/server.pid )
+	@sleep 2
+	$(MAKE) fx-add ID=$${ID:-cam1} RTSP="$(RTSP)" INTERVAL=$${INTERVAL:-1000} OUT=$${OUT:-$${ID:-cam1}} SERVER=127.0.0.1:10086
+	@echo "Visit http://127.0.0.1:10086/#/frame-extractor to manage tasks"
 # Makefile 使用文档
 # https://www.gnu.org/software/make/manual/html_node/index.html
 

@@ -253,6 +253,22 @@ tail -f logs/sugar.log | grep "frame extractor"
 - 优先使用转发地址（从列表选择）
 - 仅在测试或特殊情况下手动输入原始地址
 
+### Q4: RTSP端口号不正确怎么办？
+
+**A**: 确保配置正确加载：
+1. 检查 `config.toml` 中 `[rtspconfig]` 的 `addr` 配置
+2. 确认格式为 `addr = ':15544'` （带冒号）
+3. 重启服务后验证：
+   ```bash
+   curl http://localhost:5066/api/v1/live/playurl/1 | jq '.info.RTSP'
+   # 应该返回: "rtsp://服务器IP:15544/live/stream_1"
+   ```
+
+**已知问题修复**（v1.2.0+）：
+- 添加了所有配置字段的 `mapstructure` 标签
+- 确保 viper 正确映射 `[rtspconfig]` 到 `RtspConfig` 结构体
+- 端口号现在正确包含在转发地址中
+
 ---
 
 ## API参考

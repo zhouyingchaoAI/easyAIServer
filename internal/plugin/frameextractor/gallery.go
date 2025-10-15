@@ -198,6 +198,20 @@ func (s *Service) DeleteSnapshot(taskID, path string) error {
 	return s.deleteLocalSnapshot(path)
 }
 
+// DeleteSnapshots deletes multiple snapshots
+func (s *Service) DeleteSnapshots(taskID string, paths []string) error {
+	var errs []string
+	for _, path := range paths {
+		if err := s.DeleteSnapshot(taskID, path); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to delete some snapshots: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
 // deleteLocalSnapshot deletes from local filesystem
 func (s *Service) deleteLocalSnapshot(relPath string) error {
 	baseDir := s.cfg.OutputDir

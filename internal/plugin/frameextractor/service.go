@@ -237,17 +237,26 @@ func (s *Service) UpdateConfig(newCfg *conf.FrameExtractorConfig) error {
     s.cfg.MinIO = newCfg.MinIO
     s.mu.Unlock()
     
+    s.log.Info("updating config", 
+        slog.Bool("enable", s.cfg.Enable),
+        slog.String("store", s.cfg.Store),
+        slog.String("minio_endpoint", s.cfg.MinIO.Endpoint),
+        slog.String("minio_bucket", s.cfg.MinIO.Bucket))
+    
     // reinitialize minio if store changed to minio
     if s.cfg.Store == "minio" {
         if err := s.initMinio(); err != nil {
+            s.log.Error("failed to init minio", slog.String("err", err.Error()))
             return err
         }
     }
     
     // persist to config file
     if err := s.saveConfigToFile(s.configPath); err != nil {
-        s.log.Warn("failed to persist config", slog.String("err", err.Error()))
+        s.log.Error("failed to persist config", slog.String("path", s.configPath), slog.String("err", err.Error()))
+        return err
     }
+    s.log.Info("config persisted", slog.String("path", s.configPath))
     return nil
 }
 

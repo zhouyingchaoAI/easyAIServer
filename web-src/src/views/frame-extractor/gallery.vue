@@ -54,6 +54,15 @@
       </template>
       <template #extra>
         <a-space>
+          <a-button 
+            v-if="selectedKeys.length > 0" 
+            danger 
+            @click="onBatchDelete"
+            :loading="batchLoading"
+          >
+            <template #icon><DeleteOutlined /></template>
+            删除选中 ({{ selectedKeys.length }})
+          </a-button>
           <a-radio-group v-model:value="viewMode" button-style="solid" size="large">
             <a-radio-button value="grid">
               <AppstoreOutlined /> 网格
@@ -67,35 +76,56 @@
 
       <a-spin :spinning="loading">
         <!-- 网格视图 -->
-        <div v-if="viewMode === 'grid'" class="image-grid">
-          <div 
-            v-for="snap in snapshots" 
-            :key="snap.path" 
-            class="image-card"
-          >
-            <div class="image-wrapper" @click="() => onPreview(snap)">
-              <img :src="snap.url" :alt="snap.filename" loading="lazy" />
-              <div class="image-overlay">
-                <EyeOutlined class="preview-icon" />
+        <div v-if="viewMode === 'grid'">
+          <div class="batch-actions mb-4">
+            <a-checkbox 
+              v-model:checked="selectAll"
+              @change="onSelectAllChange"
+            >
+              全选
+            </a-checkbox>
+            <span v-if="selectedKeys.length > 0" class="ml-2 text-muted">
+              已选 {{ selectedKeys.length }} 项
+            </span>
+          </div>
+          
+          <div class="image-grid">
+            <div 
+              v-for="snap in snapshots" 
+              :key="snap.path" 
+              class="image-card"
+              :class="{ 'selected': selectedKeys.includes(snap.path) }"
+            >
+              <div class="checkbox-overlay">
+                <a-checkbox 
+                  :checked="selectedKeys.includes(snap.path)"
+                  @change="(e) => onSelectChange(snap.path, e.target.checked)"
+                />
               </div>
-            </div>
-            <div class="image-info">
-              <div class="filename" :title="snap.filename">{{ snap.filename }}</div>
-              <div class="meta">
-                <span><ClockCircleOutlined /> {{ formatTime(snap.mod_time) }}</span>
-                <span><FileOutlined /> {{ formatSize(snap.size) }}</span>
+              <div class="image-wrapper" @click="() => onPreview(snap)">
+                <img :src="snap.url" :alt="snap.filename" loading="lazy" />
+                <div class="image-overlay">
+                  <EyeOutlined class="preview-icon" />
+                </div>
               </div>
-              <div class="actions">
-                <a-button type="primary" size="small" @click="() => onPreview(snap)">
-                  <template #icon><EyeOutlined /></template>
-                  预览
-                </a-button>
-                <a-popconfirm title="确认删除?" @confirm="() => onDeleteSnap(snap)">
-                  <a-button danger size="small">
-                    <template #icon><DeleteOutlined /></template>
-                    删除
+              <div class="image-info">
+                <div class="filename" :title="snap.filename">{{ snap.filename }}</div>
+                <div class="meta">
+                  <span><ClockCircleOutlined /> {{ formatTime(snap.mod_time) }}</span>
+                  <span><FileOutlined /> {{ formatSize(snap.size) }}</span>
+                </div>
+                <div class="actions">
+                  <a-button type="primary" size="small" @click="() => onPreview(snap)">
+                    <template #icon><EyeOutlined /></template>
+                    预览
                   </a-button>
-                </a-popconfirm>
+                  <a-popconfirm title="确认删除?" @confirm="() => onDeleteSnap(snap)">
+                    <a-button danger size="small">
+                      <template #icon><DeleteOutlined /></template>
+                      删除
+                    </a-button>
+                  </a-popconfirm>
+                </div>
               </div>
             </div>
           </div>
@@ -106,6 +136,7 @@
           v-else
           :data-source="snapshots" 
           :columns="listColumns"
+          :row-selection="{ selectedRowKeys: selectedKeys, onChange: onSelectionChange }"
           row-key="path"
           :pagination="{ pageSize: 20, showTotal: (total) => `共 ${total} 条` }"
         >
@@ -177,7 +208,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { 
@@ -193,9 +224,12 @@ const tasks = ref([])
 const selectedTaskId = ref(null)
 const snapshots = ref([])
 const loading = ref(false)
+const batchLoading = ref(false)
 const viewMode = ref('grid')
 const previewVisible = ref(false)
 const previewImage = ref(null)
+const selectedKeys = ref([])
+const selectAll = ref(false)
 
 const listColumns = [
   { title: '预览', key: 'preview', width: 100 },
@@ -230,6 +264,8 @@ const fetchTasks = async () => {
 }
 
 const onTaskChange = () => {
+  selectedKeys.value = []
+  selectAll.value = false
   fetchSnapshots()
 }
 
@@ -239,12 +275,38 @@ const fetchSnapshots = async () => {
   try {
     const { data } = await frameApi.listSnapshots(selectedTaskId.value)
     snapshots.value = data?.items || []
+    selectedKeys.value = []
+    selectAll.value = false
   } catch (e) {
     message.error(e?.response?.data?.error || '获取快照列表失败')
   } finally {
     loading.value = false
   }
 }
+
+const onSelectAllChange = (e) => {
+  if (e.target.checked) {
+    selectedKeys.value = snapshots.value.map(s => s.path)
+  } else {
+    selectedKeys.value = []
+  }
+}
+
+const onSelectChange = (path, checked) => {
+  if (checked) {
+    selectedKeys.value.push(path)
+  } else {
+    selectedKeys.value = selectedKeys.value.filter(k => k !== path)
+  }
+}
+
+const onSelectionChange = (keys) => {
+  selectedKeys.value = keys
+}
+
+watch(() => selectedKeys.value.length, (newLen) => {
+  selectAll.value = newLen > 0 && newLen === snapshots.value.length
+})
 
 const onPreview = (snap) => {
   previewImage.value = snap
@@ -258,6 +320,26 @@ const onDeleteSnap = async (snap) => {
     await fetchSnapshots()
   } catch (e) {
     message.error(e?.response?.data?.error || '删除失败')
+  }
+}
+
+const onBatchDelete = async () => {
+  if (selectedKeys.value.length === 0) {
+    message.warning('请先选择要删除的快照')
+    return
+  }
+  
+  batchLoading.value = true
+  try {
+    await frameApi.batchDeleteSnapshots(selectedTaskId.value, selectedKeys.value)
+    message.success(`成功删除 ${selectedKeys.value.length} 个快照`)
+    selectedKeys.value = []
+    selectAll.value = false
+    await fetchSnapshots()
+  } catch (e) {
+    message.error(e?.response?.data?.error || '批量删除失败')
+  } finally {
+    batchLoading.value = false
   }
 }
 
@@ -310,6 +392,22 @@ onMounted(fetchTasks)
   margin-top: 16px;
 }
 
+.ml-2 {
+  margin-left: 8px;
+}
+
+.text-muted {
+  color: #8c8c8c;
+}
+
+.batch-actions {
+  padding: 12px;
+  background: #fafafa;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+}
+
 .image-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -318,6 +416,7 @@ onMounted(fetchTasks)
 }
 
 .image-card {
+  position: relative;
   background: white;
   border-radius: 8px;
   overflow: hidden;
@@ -325,9 +424,25 @@ onMounted(fetchTasks)
   transition: all 0.3s;
 }
 
+.image-card.selected {
+  border: 2px solid #1890ff;
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+}
+
 .image-card:hover {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   transform: translateY(-2px);
+}
+
+.checkbox-overlay {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  background: white;
+  border-radius: 4px;
+  padding: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .image-wrapper {
@@ -441,4 +556,3 @@ onMounted(fetchTasks)
   border-radius: 8px;
 }
 </style>
-

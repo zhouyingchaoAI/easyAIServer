@@ -153,6 +153,27 @@ func registerApp(g gin.IRouter) {
 		}
 		c.JSON(200, gin.H{"ok": true})
 	})
+	// batch delete snapshots
+	fem.POST("/snapshots/:task_id/batch_delete", func(c *gin.Context) {
+		taskID := c.Param("task_id")
+		var req struct {
+			Paths []string `json:"paths"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		fx := frameextractor.GetGlobal()
+		if fx == nil {
+			c.JSON(500, gin.H{"error": "service not ready"})
+			return
+		}
+		if err := fx.DeleteSnapshots(taskID, req.Paths); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"ok": true, "deleted": len(req.Paths)})
+	})
 	// start a task
 	fem.POST("/tasks/:id/start", func(c *gin.Context) {
 		id := c.Param("id")

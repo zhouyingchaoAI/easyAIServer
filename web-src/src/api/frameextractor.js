@@ -32,6 +32,9 @@ export default {
   },
   deleteSnapshot(taskId, path){
     return request({ url: `/frame_extractor/snapshots/${taskId}/${path}`, method: 'delete' });
+  },
+  batchDeleteSnapshots(taskId, paths){
+    return request({ url: `/frame_extractor/snapshots/${taskId}/batch_delete`, method: 'post', data: { paths } });
   }
 }
 

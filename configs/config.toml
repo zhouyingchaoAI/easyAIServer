@@ -212,3 +212,12 @@ rtsp_url = 'rtsp://127.0.0.1:15544/live/stream_1'
 interval_ms = 5000
 output_path = '客流分析1'
 enabled = true
+
+[ai_analysis]
+enable = false  # 启用智能分析插件
+scan_interval_sec = 10  # MinIO扫描间隔（秒）
+mq_type = 'kafka'  # 消息队列类型：kafka|rabbitmq
+mq_address = 'localhost:9092'  # 消息队列地址
+mq_topic = 'easydarwin.alerts'  # 告警推送topic
+heartbeat_timeout_sec = 90  # 算法服务心跳超时（秒）
+max_concurrent_infer = 5  # 最大并发推理任务数

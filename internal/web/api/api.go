@@ -57,6 +57,10 @@ func registerApp(g gin.IRouter) {
 
 	users := g.Group("/users")
 	users.PUT("/:username/reset-password", l.resetPassword)
+	
+	// AI analysis and alerts
+	registerAIAnalysisAPI(g)
+	registerAlertAPI(g)
 
 	// frame extractor manage
 	fem := g.Group("/frame_extractor")

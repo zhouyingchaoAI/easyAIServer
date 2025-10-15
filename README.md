@@ -29,6 +29,13 @@ EasyDarwin is licensed under the MIT License.
   - Auto-reconnect and exponential backoff
   - Auto-create/delete MinIO paths on task add/remove
   - Configuration persistence to config.toml
++ **🤖 AI Analysis Plugin**: Intelligent video analysis with algorithm service registry
+  - **Algorithm service registry** with heartbeat mechanism
+  - Auto-scan MinIO for new frames (configurable interval)
+  - Match algorithms by task type (one type → multiple algorithms)
+  - HTTP-based inference scheduler with concurrency control
+  - Alert storage (SQLite) and Kafka message queue push
+  - Web UI for viewing alerts and registered services
 
 ### Features to be Added
 + User Authentication
@@ -87,6 +94,7 @@ easydarwin
 See detailed documentation:
 - [Frame Extractor Documentation](doc/FRAME_EXTRACTOR.md) - Complete guide
 - [Task Type Classification](doc/TASK_TYPES.md) - AI analysis preparation
+- [AI Analysis Plugin](doc/AI_ANALYSIS.md) - Intelligent analysis
 
 ```shell
 # Enable plugin
@@ -103,6 +111,38 @@ make build/local
 # - Create tasks with type classification (人数统计, 人员跌倒, etc.)
 # - Frames saved to: snapshots/{task_type}/{task_id}/
 # - Ready for AI analysis service integration
+```
+
+### AI Analysis Plugin Quick Start
+
+```shell
+# 1. Enable Frame Extractor with MinIO
+# Edit configs/config.toml:
+# [frame_extractor]
+# store = 'minio'
+
+# 2. Enable AI Analysis
+# [ai_analysis]
+# enable = true
+# mq_address = 'localhost:9092'  # Kafka address
+
+# 3. Start algorithm service
+cd examples
+python3 algorithm_service.py \
+  --service-id people_counter \
+  --task-types 人数统计 \
+  --port 8000
+
+# 4. View alerts
+# Open: http://localhost:5066/#/alerts
+# Open: http://localhost:5066/#/ai-services
+
+# Features:
+# - Algorithm service auto-registration
+# - Auto-scan MinIO for new frames
+# - Concurrent inference scheduling
+# - Alert storage and Kafka push
+# - Web UI for alert management
 ```
 
 ### System Service

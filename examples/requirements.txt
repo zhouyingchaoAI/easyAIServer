@@ -1,0 +1,11 @@
+# 算法服务Python依赖
+
+# 如果使用真实AI模型（YOLOv8）
+ultralytics>=8.0.0
+opencv-python>=4.8.0
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Kafka消费者（如果需要）
+kafka-python>=2.0.2
+

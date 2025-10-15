@@ -78,6 +78,26 @@ const RootRoute = {
       },
     },
     {
+      path: '/alerts',
+      name: 'Alerts',
+      component: () => import('@/views/alerts/index.vue'),
+      meta: {
+        title: '智能告警',
+        icon: 'mdi:alert-circle-outline',
+        namePath: ['Alerts'],
+      },
+    },
+    {
+      path: '/ai-services',
+      name: 'AIServices',
+      component: () => import('@/views/alerts/services.vue'),
+      meta: {
+        title: '算法服务',
+        icon: 'mdi:brain',
+        namePath: ['AIServices'],
+      },
+    },
+    {
       path: '/apidoc.html',
       name: 'Apidoc',
       component: () => import('@/views/apidoc/index.vue'),

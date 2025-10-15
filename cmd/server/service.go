@@ -9,6 +9,8 @@ import (
 	"context"
 	"easydarwin/internal/core/source"
 	"easydarwin/internal/core/svr"
+	"easydarwin/internal/data"
+	"easydarwin/internal/plugin/aianalysis"
 	"easydarwin/internal/plugin/frameextractor"
 	"easydarwin/utils/pkg/conc"
 	"easydarwin/utils/pkg/server"
@@ -60,6 +62,11 @@ func (p *program) run() {
 		os.Exit(0)
 	}
 
+	// migrate alert table
+	if err := data.MigrateAlertTable(); err != nil {
+		slog.Error("alert table migration failed", "err", err)
+	}
+
 	// start frame extractor plugin if enabled
     fx := frameextractor.New(&gCfg.FrameExtractor)
     fx.SetConfigPath(filepath.Join(gConfigDir, "config.toml"))
@@ -67,6 +74,13 @@ func (p *program) run() {
 		slog.Error("frame extractor start failed", "err", err)
 	}
     frameextractor.SetGlobal(fx)
+	
+	// start AI analysis plugin if enabled
+	ai := aianalysis.NewService(&gCfg.AIAnalysis, &gCfg.FrameExtractor, slog.Default())
+	if err := ai.Start(); err != nil {
+		slog.Error("AI analysis start failed", "err", err)
+	}
+	aianalysis.SetGlobal(ai)
 
 	svcServer := server.New(gHttpHandler,
 		server.Port(gCfg.DefaultHttpConfig.HttpListenAddr),
@@ -104,6 +118,7 @@ func (p *program) run() {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			_ = fx.Shutdown(ctx)
+			_ = ai.Stop()
 			if err := g.UnsafeWaitWithContext(ctx); err != nil {
 				slog.Error("UnsafeWaitWithContext", slog.Any("err", err))
 			}

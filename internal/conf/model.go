@@ -148,6 +148,9 @@ type Bootstrap struct {
 
 	// FrameExtractor 插件配置
 	FrameExtractor       FrameExtractorConfig   `json:"frame_extractor" mapstructure:"frame_extractor"`
+	
+	// AIAnalysis 智能分析插件配置
+	AIAnalysis           AIAnalysisConfig       `json:"ai_analysis" mapstructure:"ai_analysis"`
 
 	*config.Config
 	LogicCfg *logic.Config
@@ -427,4 +430,43 @@ func (s *Bootstrap) Key() string {
 		return s.DefaultHttpConfig.HttpsKeyFile
 	}
 	return filepath.Join(Getwd(), s.DefaultHttpConfig.HttpsKeyFile)
+}
+
+// AIAnalysisConfig 智能分析插件配置
+type AIAnalysisConfig struct {
+	Enable              bool   `json:"enable" mapstructure:"enable"`
+	ScanIntervalSec     int    `json:"scan_interval_sec" mapstructure:"scan_interval_sec"`
+	MQType              string `json:"mq_type" mapstructure:"mq_type"` // kafka|rabbitmq
+	MQAddress           string `json:"mq_address" mapstructure:"mq_address"`
+	MQTopic             string `json:"mq_topic" mapstructure:"mq_topic"`
+	HeartbeatTimeoutSec int    `json:"heartbeat_timeout_sec" mapstructure:"heartbeat_timeout_sec"`
+	MaxConcurrentInfer  int    `json:"max_concurrent_infer" mapstructure:"max_concurrent_infer"`
+}
+
+// AlgorithmService 算法服务注册信息
+type AlgorithmService struct {
+	ServiceID   string   `json:"service_id"`   // 服务唯一ID
+	Name        string   `json:"name"`         // 服务名称
+	TaskTypes   []string `json:"task_types"`   // 支持的任务类型
+	Endpoint    string   `json:"endpoint"`     // 推理HTTP端点
+	Version     string   `json:"version"`      // 版本号
+	RegisterAt  int64    `json:"register_at"`  // 注册时间戳
+	LastHeartbeat int64  `json:"last_heartbeat"` // 最后心跳时间戳
+}
+
+// InferenceRequest 推理请求
+type InferenceRequest struct {
+	ImageURL  string `json:"image_url"`  // MinIO预签名URL
+	TaskID    string `json:"task_id"`    // 任务ID
+	TaskType  string `json:"task_type"`  // 任务类型
+	ImagePath string `json:"image_path"` // MinIO对象路径
+}
+
+// InferenceResponse 推理响应
+type InferenceResponse struct {
+	Success         bool        `json:"success"`
+	Result          interface{} `json:"result"` // 推理结果（JSON）
+	Confidence      float64     `json:"confidence"`
+	InferenceTimeMs int         `json:"inference_time_ms"`
+	Error           string      `json:"error,omitempty"`
 }

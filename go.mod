@@ -156,9 +156,11 @@ require (
 	github.com/minio/minio-go/v7 v7.0.95 // indirect
 	github.com/onsi/gomega v1.27.6 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
+	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/rs/zerolog v1.26.1 // indirect
+	github.com/segmentio/kafka-go v0.4.49 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/tevino/abool v0.0.0-20170917061928-9b9efcf221b5 // indirect
 	github.com/tinylib/msgp v1.3.0 // indirect

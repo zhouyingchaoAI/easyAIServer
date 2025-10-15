@@ -178,10 +178,33 @@
               </a-form-item>
             </a-col>
             <a-col :xs="24" :sm="12" :md="10">
-              <a-form-item label="RTSP地址" :required="true">
-                <a-input v-model:value="form.rtsp_url" size="large" placeholder="rtsp://user:pass@ip:554/...">
+              <a-form-item>
+                <template #label>
+                  <span>
+                    RTSP地址
+                    <a-tooltip title="从直播列表选择或手动输入">
+                      <InfoCircleOutlined style="margin-left: 4px; color: #8c8c8c;" />
+                    </a-tooltip>
+                    <a-button 
+                      type="link" 
+                      size="small" 
+                      @click="fetchLiveStreams"
+                      style="margin-left: 8px;"
+                    >
+                      <template #icon><ReloadOutlined /></template>
+                      刷新列表
+                    </a-button>
+                  </span>
+                </template>
+                <a-auto-complete 
+                  v-model:value="form.rtsp_url" 
+                  :options="rtspOptions"
+                  size="large" 
+                  placeholder="输入或从直播流列表选择"
+                  :filter-option="filterRtspOption"
+                >
                   <template #prefix><LinkOutlined /></template>
-                </a-input>
+                </a-auto-complete>
               </a-form-item>
             </a-col>
             <a-col :xs="24" :sm="12" :md="4">
@@ -326,7 +349,7 @@ import {
   TagOutlined, LinkOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
   PictureOutlined, PlayCircleOutlined, PauseCircleOutlined, ReloadOutlined
 } from '@ant-design/icons-vue'
-import { frameApi } from '@/api'
+import { frameApi, live } from '@/api'
 
 const router = useRouter()
 
@@ -352,6 +375,8 @@ const configLoadSuccess = ref(false)
 const items = ref([])
 const taskActionLoading = ref({})
 const editingInterval = ref({})
+const liveStreams = ref([])
+const rtspOptions = ref([])
 
 const columns = [
   { title: '任务ID', key: 'id', width: 120 },
@@ -423,6 +448,28 @@ const onSaveConfig = async () => {
   } finally {
     configLoading.value = false
   }
+}
+
+const fetchLiveStreams = async () => {
+  try {
+    const { data } = await live.getLiveList({})
+    liveStreams.value = data?.items || []
+    // build rtsp options for autocomplete
+    rtspOptions.value = liveStreams.value.map(stream => {
+      const url = stream.rtsp_url || stream.url || ''
+      return {
+        value: url,
+        label: `${stream.stream_id || stream.id || ''} - ${url}`
+      }
+    }).filter(opt => opt.value)
+    console.log('loaded live streams:', rtspOptions.value.length)
+  } catch (e) {
+    console.error('fetch live streams failed', e)
+  }
+}
+
+const filterRtspOption = (input, option) => {
+  return option.label.toLowerCase().includes(input.toLowerCase())
 }
 
 const fetchList = async () => {
@@ -516,6 +563,7 @@ const onUpdateInterval = async (record) => {
 onMounted(() => {
   fetchConfig()
   fetchList()
+  fetchLiveStreams()
 })
 </script>
 

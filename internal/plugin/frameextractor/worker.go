@@ -61,7 +61,12 @@ func (s *Service) runLocalSinkLoop(task conf.FrameExtractTask) {
     if baseDir == "" {
         baseDir = filepath.Join(system.GetCWD(), "snapshots")
     }
-    dir := filepath.Join(baseDir, task.OutputPath)
+    // 目录结构：任务类型/任务ID/
+    taskType := task.TaskType
+    if taskType == "" {
+        taskType = "未分类"
+    }
+    dir := filepath.Join(baseDir, taskType, task.OutputPath)
     _ = os.MkdirAll(dir, 0o755)
 
     minBackoff := 1 * time.Second
@@ -132,7 +137,12 @@ func (s *Service) runLocalSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
     if baseDir == "" {
         baseDir = filepath.Join(system.GetCWD(), "snapshots")
     }
-    dir := filepath.Join(baseDir, task.OutputPath)
+    // 目录结构：任务类型/任务ID/
+    taskType := task.TaskType
+    if taskType == "" {
+        taskType = "未分类"
+    }
+    dir := filepath.Join(baseDir, taskType, task.OutputPath)
     _ = os.MkdirAll(dir, 0o755)
 
     minBackoff := 1 * time.Second

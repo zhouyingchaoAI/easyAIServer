@@ -170,14 +170,23 @@
       <a-card class="add-task-card mb-4" :bordered="false">
         <a-form :model="form" layout="vertical">
           <a-row :gutter="16">
-            <a-col :xs="24" :sm="12" :md="6">
+            <a-col :xs="24" :sm="12" :md="5">
               <a-form-item label="任务ID" :required="true">
                 <a-input v-model:value="form.id" size="large" placeholder="如 cam1">
                   <template #prefix><TagOutlined /></template>
                 </a-input>
               </a-form-item>
             </a-col>
-            <a-col :xs="24" :sm="12" :md="10">
+            <a-col :xs="24" :sm="12" :md="5">
+              <a-form-item label="任务类型" :required="true">
+                <a-select v-model:value="form.task_type" size="large" placeholder="选择类型">
+                  <a-select-option v-for="type in taskTypes" :key="type" :value="type">
+                    {{ type }}
+                  </a-select-option>
+                </a-select>
+              </a-form-item>
+            </a-col>
+            <a-col :xs="24" :sm="12" :md="8">
               <a-form-item>
                 <template #label>
                   <span>
@@ -208,12 +217,12 @@
                 </a-auto-complete>
               </a-form-item>
             </a-col>
-            <a-col :xs="24" :sm="12" :md="4">
+            <a-col :xs="24" :sm="12" :md="3">
               <a-form-item label="间隔(ms)">
                 <a-input-number v-model:value="form.interval_ms" :min="200" :step="100" size="large" style="width: 100%" />
               </a-form-item>
             </a-col>
-            <a-col :xs="24" :sm="12" :md="4">
+            <a-col :xs="24" :sm="12" :md="3">
               <a-form-item label="输出路径">
                 <a-input v-model:value="form.output_path" size="large" placeholder="cam1">
                   <template #prefix><FolderOutlined /></template>
@@ -241,6 +250,9 @@
         <template #bodyCell="{ column, record }">
           <template v-if="column.key==='id'">
             <a-tag color="blue">{{ record.id }}</a-tag>
+          </template>
+          <template v-else-if="column.key==='task_type'">
+            <a-tag color="purple">{{ record.task_type || '未分类' }}</a-tag>
           </template>
           <template v-else-if="column.key==='status'">
             <a-tag :color="record.enabled ? 'green' : 'default'">
@@ -369,7 +381,7 @@ const config = ref({
   }
 })
 
-const form = ref({ id: '', rtsp_url: '', interval_ms: 1000, output_path: '' })
+const form = ref({ id: '', task_type: '', rtsp_url: '', interval_ms: 1000, output_path: '' })
 const loading = ref(false)
 const configLoading = ref(false)
 const configLoadSuccess = ref(false)
@@ -378,13 +390,14 @@ const taskActionLoading = ref({})
 const editingInterval = ref({})
 const liveStreams = ref([])
 const rtspOptions = ref([])
+const taskTypes = ref([])
 
 const columns = [
   { title: '任务ID', key: 'id', width: 120 },
+  { title: '任务类型', key: 'task_type', width: 120 },
   { title: '状态', key: 'status', width: 100 },
   { title: 'RTSP地址', key: 'rtsp_url', ellipsis: true },
-  { title: '间隔', key: 'interval_ms', width: 150 },
-  { title: '输出路径', key: 'output_path', width: 150 },
+  { title: '间隔', key: 'interval_ms', width: 100 },
   { title: '操作', key: 'action', width: 280, fixed: 'right' },
 ]
 
@@ -448,6 +461,16 @@ const onSaveConfig = async () => {
     message.error(e?.response?.data?.error || '配置保存失败')
   } finally {
     configLoading.value = false
+  }
+}
+
+const fetchTaskTypes = async () => {
+  try {
+    const { data } = await frameApi.getTaskTypes()
+    taskTypes.value = data?.task_types || []
+    console.log('loaded task types:', taskTypes.value)
+  } catch (e) {
+    console.error('fetch task types failed', e)
   }
 }
 
@@ -520,15 +543,15 @@ const fetchList = async () => {
 }
 
 const onAdd = async () => {
-  if (!form.value.id || !form.value.rtsp_url) {
-    message.error('请填写任务ID与RTSP地址')
+  if (!form.value.id || !form.value.task_type || !form.value.rtsp_url) {
+    message.error('请填写任务ID、任务类型与RTSP地址')
     return
   }
   loading.value = true
   try {
     await frameApi.addTask(form.value)
     message.success('任务添加成功' + (config.value.store === 'minio' ? '，MinIO路径已创建' : ''))
-    form.value = { id: '', rtsp_url: '', interval_ms: 1000, output_path: '' }
+    form.value = { id: '', task_type: '', rtsp_url: '', interval_ms: 1000, output_path: '' }
     await fetchList()
   } catch (e) {
     message.error(e?.response?.data?.error || '添加失败')
@@ -606,6 +629,7 @@ onMounted(() => {
   fetchConfig()
   fetchList()
   fetchLiveStreams()
+  fetchTaskTypes()
 })
 </script>
 

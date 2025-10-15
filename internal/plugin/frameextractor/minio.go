@@ -63,13 +63,19 @@ func (s *Service) createMinioPath(task conf.FrameExtractTask) error {
 		return fmt.Errorf("minio not initialized")
 	}
 	
+	// 目录结构：任务类型/任务ID/
+	taskType := task.TaskType
+	if taskType == "" {
+		taskType = "未分类"
+	}
+	
 	// create a .keep file to establish the path
 	// use forward slashes for MinIO paths (S3 convention)
-	key := filepath.ToSlash(filepath.Join(s.minio.base, task.OutputPath, ".keep"))
+	key := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.OutputPath, ".keep"))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	
-	content := []byte(fmt.Sprintf("Task: %s\nCreated: %s\n", task.ID, time.Now().Format(time.RFC3339)))
+	content := []byte(fmt.Sprintf("Task: %s\nType: %s\nCreated: %s\n", task.ID, taskType, time.Now().Format(time.RFC3339)))
 	_, err := s.minio.client.PutObject(ctx, s.minio.bucket, key, bytes.NewReader(content), int64(len(content)), minio.PutObjectOptions{
 		ContentType: "text/plain",
 	})
@@ -77,7 +83,7 @@ func (s *Service) createMinioPath(task conf.FrameExtractTask) error {
 		return err
 	}
 	
-	s.log.Info("created minio path", slog.String("task", task.ID), slog.String("key", key))
+	s.log.Info("created minio path", slog.String("task", task.ID), slog.String("type", taskType), slog.String("key", key))
 	return nil
 }
 
@@ -87,8 +93,14 @@ func (s *Service) deleteMinioPath(task conf.FrameExtractTask) error {
 		return fmt.Errorf("minio not initialized")
 	}
 	
+	// 目录结构：任务类型/任务ID/
+	taskType := task.TaskType
+	if taskType == "" {
+		taskType = "未分类"
+	}
+	
 	// use forward slashes for S3/MinIO
-	prefix := filepath.ToSlash(filepath.Join(s.minio.base, task.OutputPath)) + "/"
+	prefix := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.OutputPath)) + "/"
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	
@@ -112,7 +124,7 @@ func (s *Service) deleteMinioPath(task conf.FrameExtractTask) error {
 		count++
 	}
 	
-	s.log.Info("deleted minio path", slog.String("task", task.ID), slog.String("prefix", prefix), slog.Int("objects", count))
+	s.log.Info("deleted minio path", slog.String("task", task.ID), slog.String("type", taskType), slog.String("prefix", prefix), slog.Int("objects", count))
 	return nil
 }
 
@@ -209,8 +221,13 @@ func (s *Service) runMinioSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
 
 				// upload frame
 				ts := time.Now().Format("20060102-150405.000")
+				// 目录结构：任务类型/任务ID/
+				taskType := task.TaskType
+				if taskType == "" {
+					taskType = "未分类"
+				}
 				// use forward slashes for MinIO/S3 paths
-				key := filepath.ToSlash(filepath.Join(s.minio.base, task.OutputPath, fmt.Sprintf("%s.jpg", ts)))
+				key := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.OutputPath, fmt.Sprintf("%s.jpg", ts)))
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				_, err = s.minio.client.PutObject(ctx, s.minio.bucket, key, &frame, int64(frame.Len()), minio.PutObjectOptions{
 					ContentType: "image/jpeg",

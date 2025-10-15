@@ -78,6 +78,20 @@ func (s *Service) buildConfigLines() []string {
 	lines = append(lines, fmt.Sprintf("interval_ms = %d", s.cfg.IntervalMs))
 	lines = append(lines, fmt.Sprintf("output_dir = '%s'", s.cfg.OutputDir))
 	lines = append(lines, fmt.Sprintf("store = '%s'", s.cfg.Store))
+	
+	// 添加任务类型列表
+	if len(s.cfg.TaskTypes) > 0 {
+		taskTypesStr := "["
+		for i, tt := range s.cfg.TaskTypes {
+			if i > 0 {
+				taskTypesStr += ", "
+			}
+			taskTypesStr += fmt.Sprintf("'%s'", tt)
+		}
+		taskTypesStr += "]"
+		lines = append(lines, fmt.Sprintf("task_types = %s", taskTypesStr))
+	}
+	
 	lines = append(lines, "")
 	lines = append(lines, "[frame_extractor.minio]")
 	lines = append(lines, fmt.Sprintf("endpoint = '%s'", s.cfg.MinIO.Endpoint))
@@ -95,10 +109,12 @@ func (s *Service) buildTaskLines() []string {
 	for _, t := range s.cfg.Tasks {
 		lines = append(lines, "[[frame_extractor.tasks]]")
 		lines = append(lines, fmt.Sprintf("id = '%s'", t.ID))
+		lines = append(lines, fmt.Sprintf("task_type = '%s'", t.TaskType))
 		lines = append(lines, fmt.Sprintf("rtsp_url = '%s'", t.RtspURL))
 		lines = append(lines, fmt.Sprintf("interval_ms = %d", t.IntervalMs))
 		lines = append(lines, fmt.Sprintf("output_path = '%s'", t.OutputPath))
 		lines = append(lines, fmt.Sprintf("enabled = %t", t.Enabled))
+		lines = append(lines, "")
 	}
 	return lines
 }

@@ -60,7 +60,12 @@ func (s *Service) listLocalSnapshots(taskID string) ([]SnapshotInfo, error) {
 	if !filepath.IsAbs(baseDir) {
 		baseDir = filepath.Join(getWorkDir(), baseDir)
 	}
-	dir := filepath.Join(baseDir, task.OutputPath)
+	// 目录结构：任务类型/任务ID/
+	taskType := task.TaskType
+	if taskType == "" {
+		taskType = "未分类"
+	}
+	dir := filepath.Join(baseDir, taskType, task.OutputPath)
 	
 	s.log.Debug("listing snapshots", 
 		slog.String("task", taskID),
@@ -126,7 +131,7 @@ func (s *Service) listMinioSnapshots(taskID string) ([]SnapshotInfo, error) {
 		return nil, fmt.Errorf("minio not initialized")
 	}
 	
-	// find task to get output_path
+	// find task to get output_path and task_type
 	var task *conf.FrameExtractTask
 	for _, t := range s.cfg.Tasks {
 		if t.ID == taskID {
@@ -138,12 +143,18 @@ func (s *Service) listMinioSnapshots(taskID string) ([]SnapshotInfo, error) {
 		return nil, fmt.Errorf("task not found")
 	}
 	
+	// 目录结构：任务类型/任务ID/
+	taskType := task.TaskType
+	if taskType == "" {
+		taskType = "未分类"
+	}
+	
 	// use forward slashes for S3/MinIO
-	prefix := filepath.ToSlash(filepath.Join(s.minio.base, task.OutputPath)) + "/"
+	prefix := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.OutputPath)) + "/"
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	
-	s.log.Debug("listing minio snapshots", slog.String("task", taskID), slog.String("prefix", prefix))
+	s.log.Debug("listing minio snapshots", slog.String("task", taskID), slog.String("type", taskType), slog.String("prefix", prefix))
 	
 	objectCh := s.minio.client.ListObjects(ctx, s.minio.bucket, minio.ListObjectsOptions{
 		Prefix:    prefix,

@@ -293,6 +293,8 @@ type FrameExtractorConfig struct {
     OutputDir    string `json:"output_dir" mapstructure:"output_dir"`
     // 存储类型：local|minio
     Store        string `json:"store" mapstructure:"store"`
+    // 任务类型列表，用于智能分析分类
+    TaskTypes    []string `json:"task_types" mapstructure:"task_types"`
     // MinIO 配置（仅当 store==minio 时生效）
     MinIO MinIOConfig `json:"minio" mapstructure:"minio"`
     // 任务清单（可选），未配置时仅启用模块等待 API 下发
@@ -310,6 +312,7 @@ type MinIOConfig struct {
 
 type FrameExtractTask struct {
     ID         string `json:"id" mapstructure:"id"`
+    TaskType   string `json:"task_type" mapstructure:"task_type"` // 任务类型，用于智能分析
     RtspURL    string `json:"rtsp_url" mapstructure:"rtsp_url"`
     IntervalMs int    `json:"interval_ms" mapstructure:"interval_ms"`
     OutputPath string `json:"output_path" mapstructure:"output_path"`

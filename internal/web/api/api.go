@@ -76,6 +76,16 @@ func registerApp(g gin.IRouter) {
 			slog.String("minio_bucket", cfg.MinIO.Bucket))
 		c.JSON(200, cfg)
 	})
+	// get task types
+	fem.GET("/task_types", func(c *gin.Context) {
+		fx := frameextractor.GetGlobal()
+		if fx == nil {
+			c.JSON(500, gin.H{"error": "service not ready"})
+			return
+		}
+		cfg := fx.GetConfig()
+		c.JSON(200, gin.H{"task_types": cfg.TaskTypes})
+	})
 	// update config
 	fem.POST("/config", func(c *gin.Context) {
 		var in conf.FrameExtractorConfig

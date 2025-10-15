@@ -6,6 +6,9 @@ export default {
   updateConfig(data){
     return request({ url: '/frame_extractor/config', method: 'post', data });
   },
+  getTaskTypes(){
+    return request({ url: '/frame_extractor/task_types', method: 'get' });
+  },
   listTasks(){
     return request({ url: '/frame_extractor/tasks', method: 'get' });
   },

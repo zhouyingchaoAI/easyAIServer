@@ -152,6 +152,15 @@ func (s *Service) AddTask(t conf.FrameExtractTask) error {
         t.OutputPath = t.ID
     }
     
+    // ensure task_type has a value (default to first type or "未分类")
+    if strings.TrimSpace(t.TaskType) == "" {
+        if len(s.cfg.TaskTypes) > 0 {
+            t.TaskType = s.cfg.TaskTypes[0]
+        } else {
+            t.TaskType = "未分类"
+        }
+    }
+    
     // record into cfg
     s.cfg.Tasks = append(s.cfg.Tasks, t)
     

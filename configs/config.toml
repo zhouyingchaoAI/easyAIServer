@@ -194,6 +194,8 @@ enable = false
 interval_ms = 1000
 output_dir = './snapshots'
 store = 'local' # local|minio
+# 任务类型列表，用于智能分析分类
+task_types = ['人数统计', '人员跌倒', '人员离岗', '吸烟检测', '区域入侵', '徘徊检测', '物品遗留', '安全帽检测']
 
 [frame_extractor.minio]
 endpoint = '10.1.6.230:9000'
@@ -205,6 +207,7 @@ base_path = ''
 
 [[frame_extractor.tasks]]
 id = '客流分析1'
+task_type = '人数统计'  # 任务类型，对应task_types中的一项
 rtsp_url = 'rtsp://127.0.0.1:15544/live/stream_1'
 interval_ms = 5000
 output_path = '客流分析1'

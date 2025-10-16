@@ -208,7 +208,7 @@ base_path = ''
 
 [ai_analysis]
 enable = true  # 启用智能分析插件
-scan_interval_sec = 0.1  # MinIO扫描间隔（秒）
+scan_interval_sec = 10  # MinIO扫描间隔（秒）
 mq_type = 'kafka'  # 消息队列类型：kafka|rabbitmq
 mq_address = ''  # 消息队列地址
 mq_topic = 'easydarwin.alerts'  # 告警推送topic

@@ -11,7 +11,7 @@
 
 【访问地址】
 
-  Web 界面:  http://localhost:10008
+  Web 界面:  http://localhost:5066  ⭐ (实际端口)
   默认账号:  admin / admin
 
 【配置文件】
@@ -24,7 +24,7 @@
 
 【性能监控】
 
-  curl http://localhost:10008/api/performance/stats
+  curl http://localhost:5066/api/v1/ai_analysis/services
 
 【停止服务】
 
@@ -35,6 +35,7 @@
   scripts/一键启动.sh          - 自动配置并启动
   scripts/test_minio.sh        - 测试 MinIO 连接
   scripts/demo_multi_services.sh - 演示算法服务注册
+  快速修复MinIO.sh             - 修复 MinIO 连接问题
 
 【详细文档】
 

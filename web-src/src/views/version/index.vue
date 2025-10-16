@@ -50,7 +50,7 @@ const handleClick = (e, link) => {
         </a-flex>
         <a-flex gap="4">
             <div>构建信息: </div>
-            <div> {{ info.name }}/v{{ info.version }} (build/{{ info.buildTime }})</div>
+            <div> {{ info.name }} (build/{{ info.buildTime }})</div>
         </a-flex>
     </a-card>
     <br>

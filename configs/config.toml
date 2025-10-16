@@ -194,7 +194,6 @@ enable = true
 interval_ms = 1000
 output_dir = './snapshots'
 store = 'minio'
-# 任务类型列表，用于智能分析分类
 task_types = ['人数统计', '人员跌倒', '人员离岗', '吸烟检测', '区域入侵', '徘徊检测', '物品遗留', '安全帽检测']
 
 [frame_extractor.minio]
@@ -205,6 +204,21 @@ secret_key = 'admin123'
 use_ssl = false
 base_path = ''
 
+[[frame_extractor.tasks]]
+id = '11111'
+task_type = '人数统计'
+rtsp_url = 'rtsp://127.0.0.1:15544/live/stream_2'
+interval_ms = 3000
+output_path = '11111'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '人数统计1'
+task_type = '人数统计'
+rtsp_url = 'rtsp://127.0.0.1:15544/live/stream_1'
+interval_ms = 1000
+output_path = '人数统计1'
+enabled = true
 
 [ai_analysis]
 enable = true  # 启用智能分析插件

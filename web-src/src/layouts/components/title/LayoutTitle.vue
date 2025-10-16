@@ -37,7 +37,7 @@ baseStore.getServerInfo()
     <img class="h32px mr10px" src="/swallow.svg" alt="yanying" />
     <span v-show="collapsed">燕</span>
     <div v-show="!collapsed" :class="[{'pr24px':!collapsed}]" @click="onRouter">
-      {{ title }}<sup>{{ version }}</sup>
+      {{ title }}
     </div>
   </div>
 </template>

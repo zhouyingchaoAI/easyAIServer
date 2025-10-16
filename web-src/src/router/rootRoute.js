@@ -97,17 +97,18 @@ const RootRoute = {
         namePath: ['AIServices'],
       },
     },
-    {
-      path: '/apidoc.html',
-      name: 'Apidoc',
-      component: () => import('@/views/apidoc/index.vue'),
-      meta: {
-        title: 'route.apidoc',
-        outsideLink: true,
-        icon: 'material-symbols:unknown-document-outline-rounded',
-        namePath: ['Apidoc'],
-      },
-    },
+    // 隐藏接口文档页面
+    // {
+    //   path: '/apidoc.html',
+    //   name: 'Apidoc',
+    //   component: () => import('@/views/apidoc/index.vue'),
+    //   meta: {
+    //     title: 'route.apidoc',
+    //     outsideLink: true,
+    //     icon: 'material-symbols:unknown-document-outline-rounded',
+    //     namePath: ['Apidoc'],
+    //   },
+    // },
     {
       path: '/version',
       name: 'Version',

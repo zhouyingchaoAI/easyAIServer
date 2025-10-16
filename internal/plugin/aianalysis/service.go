@@ -4,6 +4,7 @@ import (
 	"easydarwin/internal/conf"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -17,6 +18,9 @@ type Service struct {
 	scanner   *Scanner
 	scheduler *Scheduler
 	mq        MessageQueue
+	queue     *InferenceQueue     // 智能队列
+	monitor   *PerformanceMonitor // 性能监控
+	alertMgr  *AlertManager       // 告警管理
 	log       *slog.Logger
 }
 
@@ -67,25 +71,145 @@ func (s *Service) Start() error {
 	s.registry = NewRegistry(s.cfg.HeartbeatTimeoutSec, s.log)
 	s.registry.StartHeartbeatChecker()
 
+	// 初始化智能队列
+	s.queue = NewInferenceQueue(
+		100,                    // 最大队列容量
+		StrategyDropOldest,     // 丢弃最旧的策略
+		50,                     // 积压50张告警
+		s.log,
+	)
+
+	// 初始化性能监控器
+	s.monitor = NewPerformanceMonitor(
+		5000,  // 推理超过5秒告警
+		s.log,
+	)
+
+	// 初始化告警管理器
+	s.alertMgr = NewAlertManager(1000, s.log)
+
+	// 设置告警回调
+	s.queue.SetAlertCallback(func(alert AlertInfo) {
+		s.alertMgr.SendAlert(SystemAlert{
+			Type:      SystemAlertType(alert.Type),
+			Level:     AlertLevel(alert.Level),
+			Message:   alert.Message,
+			Data: map[string]interface{}{
+				"queue_size": alert.QueueSize,
+				"dropped":    alert.Dropped,
+			},
+			Timestamp: alert.Timestamp,
+		})
+	})
+
+	s.monitor.SetAlertCallback(func(alert AlertInfo) {
+		s.alertMgr.SendAlert(SystemAlert{
+			Type:      SystemAlertType(alert.Type),
+			Level:     AlertLevel(alert.Level),
+			Message:   alert.Message,
+			Timestamp: alert.Timestamp,
+		})
+	})
+
 	// 初始化调度器
 	s.scheduler = NewScheduler(s.registry, minioClient, s.fxCfg.MinIO.Bucket, s.mq, s.cfg.MaxConcurrentInfer, s.log)
 
 	// 初始化扫描器
 	s.scanner = NewScanner(minioClient, s.fxCfg.MinIO.Bucket, s.fxCfg.MinIO.BasePath, s.log)
 
-	// 启动扫描器
-	s.scanner.Start(s.cfg.ScanIntervalSec, func(images []ImageInfo) {
-		for _, img := range images {
-			s.scheduler.ScheduleInference(img)
-			s.scanner.MarkProcessed(img.Path)
-		}
-	})
+	// 启动智能推理循环
+	s.startSmartInferenceLoop()
 
 	// 设置全局实例
 	globalService = s
 
-	s.log.Info("AI analysis plugin started successfully")
+	s.log.Info("AI analysis plugin started successfully",
+		slog.Int("queue_max_size", 100),
+		slog.String("queue_strategy", "drop_oldest"),
+		slog.Int64("slow_threshold_ms", 5000))
+	
 	return nil
+}
+
+// startSmartInferenceLoop 启动智能推理循环
+func (s *Service) startSmartInferenceLoop() {
+	// 启动扫描器
+	s.scanner.Start(s.cfg.ScanIntervalSec, func(images []ImageInfo) {
+		// 添加到智能队列
+		added := s.queue.Add(images)
+		
+		if added > 0 {
+			s.log.Info("images added to queue",
+				slog.Int("added", added),
+				slog.Int("queue_size", s.queue.Size()))
+		}
+		
+		// 标记所有图片为已扫描
+		for _, img := range images {
+			s.scanner.MarkProcessed(img.Path)
+		}
+	})
+	
+	// 启动推理处理循环
+	go s.inferenceProcessLoop()
+	
+	// 启动定期统计和检查
+	go s.periodicStatsLoop()
+}
+
+// inferenceProcessLoop 推理处理循环
+func (s *Service) inferenceProcessLoop() {
+	for {
+		// 从队列取出图片
+		img, ok := s.queue.Pop()
+		if !ok {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		
+		// 记录开始时间
+		startTime := time.Now()
+		
+		// 调度推理
+		s.scheduler.ScheduleInference(img)
+		
+		// 记录推理时间
+		inferenceTime := time.Since(startTime).Milliseconds()
+		s.monitor.RecordInference(inferenceTime, true)
+	}
+}
+
+// periodicStatsLoop 定期统计循环
+func (s *Service) periodicStatsLoop() {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	
+	for range ticker.C {
+		// 获取统计信息
+		queueStats := s.queue.GetStats()
+		perfStats := s.monitor.GetStats()
+		
+		// 记录统计日志
+		s.log.Info("performance statistics",
+			slog.Any("queue", queueStats),
+			slog.Any("performance", perfStats))
+		
+		// 检查丢弃率
+		dropRate := s.queue.GetDropRate()
+		if dropRate > 0.3 {  // 丢弃率超过30%
+			s.alertMgr.SendAlert(SystemAlert{
+				Type:    AlertTypeHighDrop,
+				Level:   LevelError,
+				Message: "图片丢弃率过高，推理能力严重不足",
+				Data: map[string]interface{}{
+					"drop_rate":      dropRate,
+					"dropped_total":  queueStats["dropped_total"],
+					"processed_total": queueStats["processed_total"],
+				},
+				Timestamp: time.Now(),
+			})
+		}
+	}
 }
 
 // Stop 停止AI分析服务
@@ -104,6 +228,14 @@ func (s *Service) Stop() error {
 		if err := s.mq.Close(); err != nil {
 			s.log.Error("failed to close MQ", slog.String("err", err.Error()))
 		}
+	}
+	
+	// 输出最终统计
+	if s.queue != nil {
+		s.log.Info("final queue stats", slog.Any("stats", s.queue.GetStats()))
+	}
+	if s.monitor != nil {
+		s.log.Info("final performance stats", slog.Any("stats", s.monitor.GetStats()))
 	}
 
 	globalService = nil

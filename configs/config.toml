@@ -205,17 +205,10 @@ secret_key = 'admin123'
 use_ssl = false
 base_path = ''
 
-[[frame_extractor.tasks]]
-id = '客流分析1'
-task_type = '人数统计'  # 任务类型，对应task_types中的一项
-rtsp_url = 'rtsp://127.0.0.1:15544/live/stream_1'
-interval_ms = 5000
-output_path = '客流分析1'
-enabled = true
 
 [ai_analysis]
 enable = true  # 启用智能分析插件
-scan_interval_sec = 10  # MinIO扫描间隔（秒）
+scan_interval_sec = 0.1  # MinIO扫描间隔（秒）
 mq_type = 'kafka'  # 消息队列类型：kafka|rabbitmq
 mq_address = ''  # 消息队列地址
 mq_topic = 'easydarwin.alerts'  # 告警推送topic

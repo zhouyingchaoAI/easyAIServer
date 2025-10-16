@@ -1,214 +1,194 @@
-# EasyDarwin
+# yanying（燕影）智能视频分析平台
 
-[EasyDarwin](http://www.easydarwin.com/) is an open-source, simple, and efficient streaming media server that supports RTMP/RTSP push and pull streams. It also supports distributing streams via RTMP/RTSP/HLS/HTTP-FLV/WebSocket-FLV/WebRTC protocols. EasyDarwin can be compiled to support Linux/Windows/macOS operating systems and various architectures including X86_64, ARMv7, AARCH64, M1, RISCV, LOONGARCH, MIPS.
+<p align="center">
+  <img src="web-src/public/swallow.svg" width="120" alt="yanying logo">
+</p>
 
-EasyDarwin 8.x is a secondary development based on the original [EasyDarwin](https://www.easydarwin.org/) software combined with the [lalmax](https://github.com/q191201771/lalmax) project.
+<p align="center">
+  <strong>开箱即用的智能视频分析平台</strong>
+</p>
 
-EasyDarwin is licensed under the MIT License.
+<p align="center">
+  流媒体服务 + 视频抽帧 + AI智能分析 = 一体化解决方案
+</p>
 
-![example](https://www.easydarwin.com/images/EasyDarwin/preview.png)
+---
 
-## Features
+## 🚀 快速启动
 
-+ Integrated web interface
-+ Video preview
-+ Supports on-demand playback; automatically disconnects when no viewers are present to save bandwidth
-+ Supports outputting multiple protocols (RTMP/RTSP/HLS/HTTP-FLV/WebSocket-FLV/WebRTC)
-+ Allows direct viewing of camera feeds through a single stream URL without requiring login or API calls
-+ Protocol supports playing H264 and H265
-+ Supports pulling RTSP streams and redistributing them via various protocols
-+ Supports push stream authentication
-+ Offline and online monitoring
-+ Video on demand functionality
-+ RESTful API with apidoc documentation tool (located in the web directory)
-+ **🎬 Frame Extractor Plugin**: Extract frames from RTSP streams at configurable intervals
-  - Supports local filesystem and MinIO object storage
-  - **Task type classification** for AI analysis (人数统计, 人员跌倒, 吸烟检测, etc.)
-  - Hierarchical directory structure: `{task_type}/{task_id}/frames`
-  - Web UI for task management with type selection
-  - Auto-reconnect and exponential backoff
-  - Auto-create/delete MinIO paths on task add/remove
-  - Configuration persistence to config.toml
-+ **🤖 AI Analysis Plugin**: Intelligent video analysis with algorithm service registry
-  - **Algorithm service registry** with heartbeat mechanism
-  - Auto-scan MinIO for new frames (configurable interval)
-  - Match algorithms by task type (one type → multiple algorithms)
-  - HTTP-based inference scheduler with concurrency control
-  - Alert storage (SQLite) and Kafka message queue push
-  - Web UI for viewing alerts and registered services
-
-### Features to be Added
-+ User Authentication
-
-## Usage
-Currently, only source code compilation is supported for generation; one-click installation packages will be supported later. Please refer to the deployment section for instructions on building from source code before use.
-
-## Directory Structure
-
-```text
-├── cmd	                    Executable programs
-│   └── server
-├── configs                 Configuration files
-├── internal                Private business logic
-│   ├── conf                Configuration models
-│   ├── core                Business domain
-│   ├── data                Database and main configuration files
-│   └── web
-│       └── api             RESTful API
-├── pkg                     Dependency libraries
-├── utils                   Utilities
-└── web                     Frontend
+```bash
+./easydarwin
 ```
 
-## Deployment
-### Building from Source Code
-Prerequisites:
-+ Go 1.23.0 installed
-+ The Go bin directory must be added to the system environment variables
+就这么简单！
 
-Then download:
-```shell
-git clone https://github.com/EasyDarwin/EasyDarwin.git
-cd EasyDarwin
-go mod tidy
+### 访问地址
+
+- **Web 管理界面**: http://localhost:10008
+- **默认账号**: admin / admin
+
+## 📋 功能特性
+
+### 流媒体服务
+- ✅ RTSP/RTMP/HLS/HTTP-FLV/WebRTC 多协议支持
+- ✅ 低延迟推拉流
+- ✅ 多路视频同时处理
+- ✅ Web 实时预览
+
+### 智能抽帧
+- ✅ 可配置抽帧频率（默认每秒5帧）
+- ✅ MinIO 对象存储
+- ✅ 支持8种任务类型：人数统计、人员跌倒、人员离岗、吸烟检测、区域入侵、徘徊检测、物品遗留、安全帽检测
+
+### AI 智能分析
+- ✅ **智能自适应推理**：自动匹配抽帧与推理速度
+- ✅ **智能队列管理**：防止存储爆满，自动丢弃策略
+- ✅ **性能监控告警**：推理慢告警、高丢弃率告警
+- ✅ 算法服务注册与发现
+- ✅ 心跳检测与故障转移
+- ✅ 支持 Kafka 告警推送
+- ✅ 每秒处理 5 张图片
+
+## 📦 项目结构
+
 ```
-### Building on Windows
+yanying/
+├── easydarwin          # 主程序（直接运行）
+├── START.sh            # 启动脚本（可选）
+├── configs/            # 配置文件
+│   └── config.toml     # 主配置
+├── scripts/            # 辅助脚本
+│   ├── 一键启动.sh
+│   ├── test_minio.sh
+│   └── ...
+├── web/                # 前端资源
+├── doc/                # 技术文档
+└── 使用说明.txt        # 快速参考
 
-When using Makefile on Windows, please use the `git bash` terminal and ensure Mingw is installed.
-```shell
-mingw32-make.exe build/windows
-cd build
-cd EasyDarwin-win-"version"-"build-time"
-EasyDarwin.exe
-```
-### Building on Linux
-```shell
-make build/linux
-cd build
-cd EasyDarwin-lin-"version"-"build-time"
-easydarwin
-```
-
-### Frame Extractor Plugin Quick Start
-
-See detailed documentation:
-- [Frame Extractor Documentation](doc/FRAME_EXTRACTOR.md) - Complete guide
-- [Task Type Classification](doc/TASK_TYPES.md) - AI analysis preparation
-- [AI Analysis Plugin](doc/AI_ANALYSIS.md) - Intelligent analysis
-
-```shell
-# Enable plugin
-make fx-enable
-
-# Build and run
-make build/local
-./build/easydarwin -conf ./configs
-
-# Access web UI
-# Open: http://localhost:10086/#/frame-extractor
-
-# Features:
-# - Create tasks with type classification (人数统计, 人员跌倒, etc.)
-# - Frames saved to: snapshots/{task_type}/{task_id}/
-# - Ready for AI analysis service integration
 ```
 
-### AI Analysis Plugin Quick Start
+## ⚙️ 配置说明
 
-```shell
-# 1. Enable Frame Extractor with MinIO
-# Edit configs/config.toml:
-# [frame_extractor]
-# store = 'minio'
+主配置文件：`configs/config.toml`
 
-# 2. Enable AI Analysis
-# [ai_analysis]
-# enable = true
-# mq_address = 'localhost:9092'  # Kafka address
+### 关键配置
 
-# 3. Start algorithm service
-cd examples
-python3 algorithm_service.py \
-  --service-id people_counter \
-  --task-types 人数统计 \
-  --port 8000
+```toml
+# 抽帧配置
+[frame_extractor]
+enable = true
+interval_ms = 200      # 每秒5帧
 
-# 4. View alerts
-# Open: http://localhost:5066/#/alerts
-# Open: http://localhost:5066/#/ai-services
-
-# Features:
-# - Algorithm service auto-registration
-# - Auto-scan MinIO for new frames
-# - Concurrent inference scheduling
-# - Alert storage and Kafka push
-# - Web UI for alert management
+# 智能分析配置
+[ai_analysis]
+enable = true
+scan_interval_sec = 1
+max_concurrent_infer = 50
 ```
 
-### System Service
-EasyDarwin can run as a system service, ensuring that the program can be restarted and used even in case of unexpected interruptions.
+## 📊 性能监控
 
-```shell
-Install service: easydarwin -service install
-Start service: easydarwin -service start
-Restart service: easydarwin -service restart
-Stop service: easydarwin -service stop
-Uninstall service: easydarwin -service uninstall
+```bash
+# 查看性能统计
+curl http://localhost:10008/api/performance/stats
+
+# 查看算法服务
+curl http://localhost:10008/api/ai/services
+
+# 实时日志
+tail -f logs/sugar.log
 ```
 
-## Getting Started Guide
+## 📖 文档
 
-Open [http://localhost:10086](http://localhost:10086) and add the streaming protocol.
+- [使用说明.txt](使用说明.txt) - 快速参考
+- [README_简易使用.md](README_简易使用.md) - 简易使用指南
+- [README_CN.md](README_CN.md) - 完整中文文档
+- [智能推理使用指南](doc/SMART_INFERENCE_USAGE.md) - 详细的智能推理文档
 
-1. **RTMP Push Stream**
+## 🛠️ 辅助工具
 
-   _When adding a push stream protocol, you need to check the actual push stream address, the following address is just an example._
+```bash
+# MinIO 连接测试
+scripts/test_minio.sh
 
-   Then use the following [ffmpeg](https://ffmpeg.org/download.html) command to stream:
-    ```shell
-    ffmpeg -re -i ./video.flv -c copy -f flv -y rtmp://localhost:21935/live/stream_1?sign=5F9ZgWP6fN
-    ```
+# 算法服务演示
+scripts/demo_multi_services.sh
 
-   Or, use the following configuration to stream through [OBS Studio](https://obsproject.com/download):
-    + Service: `Custom`
-    + Server: `rtmp://localhost:21935/live/`
-    + Stream Key: `stream_1?sign=5F9ZgWP6fN`
+# 完整自动配置启动
+scripts/一键启动.sh
+```
 
-2. **RTSP Pull Stream**
+## 🔧 常见问题
 
-   _When adding a pull stream protocol, you need to input the specific RTSP address of your camera._
+### 端口被占用
 
-   For example, using Hikvision RTSP address format:
-    ```text
-    rtsp://username:password@host:port/Streaming/Channels/101
-   ```
+```bash
+lsof -i :10008   # 检查Web端口
+lsof -i :15544   # 检查RTSP端口
+```
 
-   Or Dahua RTSP address format:
-    ```text
-    rtsp://username:password@ip:port/cam/realmonitor?channel=1&subtype=0
-   ```
+### MinIO 连接问题
 
-## Custom Configuration
+```bash
+scripts/test_minio.sh  # 测试连接
+```
 
-The default configuration directory is `config.toml` located in the same directory as the executable file.
+### 查看实时日志
 
-### Ports
-// TODO
+```bash
+tail -f logs/sugar.log
+```
 
-## Project Dependencies
+## 📈 性能指标
 
-+ lalmax
-+ gin
-+ gorm
-+ slog / zap
-+ lal
-+ sqlite
-+ pion
+- 🎯 **抽帧性能**: 每秒 5 帧
+- 🎯 **推理性能**: 每秒 5 张图片
+- 🎯 **并发能力**: 最大 50 并发推理
+- 🎯 **队列容量**: 100 张智能队列
+- 🎯 **丢弃率**: < 5% （健康状态）
 
-## Support
+## 🏗️ 技术架构
 
-Mail: [support@easydarwin.org](mailto:support@easydarwin.org) 
+```
+┌─────────────┐     ┌──────────────┐     ┌────────────────┐
+│  视频源      │────▶│ EasyDarwin   │────▶│  Web 展示      │
+│  RTSP/RTMP  │     │  流媒体服务   │     │                │
+└─────────────┘     └──────────────┘     └────────────────┘
+                           │
+                           ▼
+                    ┌──────────────┐
+                    │ 抽帧插件      │
+                    │ Frame Extract│
+                    └──────────────┘
+                           │
+                           ▼ MinIO
+                    ┌──────────────┐
+                    │ 智能分析插件  │
+                    │ AI Analysis  │
+                    └──────────────┘
+                           │
+                           ▼
+                    ┌──────────────┐
+                    │ 算法服务      │
+                    │ AI Service   │
+                    └──────────────┘
+```
 
-Website: [www.EasyDarwin.org](https://www.easydarwin.org)
+## 🤝 贡献
 
-WeChat: EasyDarwin
+欢迎提交 Issue 和 Pull Request！
+
+## 📄 许可证
+
+本项目基于 EasyDarwin 开发，遵循相应开源协议。
+
+---
+
+<p align="center">
+  <strong>简单易用 | 性能强大 | 智能分析</strong>
+</p>
+
+<p align="center">
+  Made with ❤️ by yanying team
+</p>

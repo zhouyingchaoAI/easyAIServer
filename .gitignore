@@ -1,11 +1,36 @@
-snap/*
-logs/*
-__debug_bin*
-*.db
+# 编译输出
+build/
+web/
+easydarwin
+*.exe
+*.dll
+*.so
+*.dylib
+
+# 日志文件
+logs/
 *.log
-build
-.idea/*
-stream/*
-tem/*
-web-src/node_modules
-web-src/web
+
+# 数据文件
+data/
+snapshots/
+stream/
+
+# 临时文件
+*.tmp
+*.swp
+*.swo
+*~
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# 依赖
+node_modules/
+vendor/
+
+# 系统文件
+.DS_Store
+Thumbs.db

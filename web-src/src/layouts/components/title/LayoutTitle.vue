@@ -34,8 +34,8 @@ baseStore.getServerInfo()
     class="flex-cc overflow-hidden whitespace-nowrap font-500 text-20px cp"
     :style="style"
   >
-    <!-- <img class="h32px mr10px" src="~@/assets/images/logo.png" alt="" /> -->
-    <span v-show="collapsed">E</span>
+    <img class="h32px mr10px" src="/swallow.svg" alt="yanying" />
+    <span v-show="collapsed">燕</span>
     <div v-show="!collapsed" :class="[{'pr24px':!collapsed}]" @click="onRouter">
       {{ title }}<sup>{{ version }}</sup>
     </div>

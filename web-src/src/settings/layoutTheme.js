@@ -360,8 +360,8 @@ export const uiSettings = [
  * */
 export const defaultSettings = {
   layout: 'sidemenu',
-  title: 'EasyDarwin',
-  copyright: 'EasyDarwin',
+  title: 'yanying',
+  copyright: 'yanying',
   algorithm: 'defaultAlgorithm',
   menuTheme: 'light',
   sidemenuWidth: 220,

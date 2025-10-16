@@ -12,8 +12,7 @@ const copyright = computed(() => layoutThemeStore.layoutSetting.copyright)
 <template>
   <a-layout-footer style="padding: 0 20px 20px 20px">
     <a-card class="text-center" :bodyStyle="{ padding: '10px' }">
-      Copyright © 2012~{{ systemTime.year }} 
-      <a href="http://www.easydarwin.org" target="_blank" >www.{{ copyright }}.org</a>
+      Copyright © 2024~{{ systemTime.year }} {{ copyright }}
     </a-card>
   </a-layout-footer>
 </template>

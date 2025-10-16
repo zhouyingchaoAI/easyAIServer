@@ -1,1 +1,0 @@
-import{r as t}from"./request-DfXCiAj6.1760593240000.js";const l={listAlerts(e){return t({url:"/alerts",method:"get",params:e})},getAlert(e){return t({url:`/alerts/${e}`,method:"get"})},deleteAlert(e){return t({url:`/alerts/${e}`,method:"delete"})},listServices(){return t({url:"/ai_analysis/services",method:"get"})}};export{l as a};

@@ -190,10 +190,10 @@ tranway = 'libx264'
 tranhevcway = 'copy'
 
 [frame_extractor]
-enable = false
+enable = true
 interval_ms = 1000
 output_dir = './snapshots'
-store = 'local' # local|minio
+store = 'minio'
 # 任务类型列表，用于智能分析分类
 task_types = ['人数统计', '人员跌倒', '人员离岗', '吸烟检测', '区域入侵', '徘徊检测', '物品遗留', '安全帽检测']
 
@@ -217,7 +217,7 @@ enabled = true
 enable = true  # 启用智能分析插件
 scan_interval_sec = 10  # MinIO扫描间隔（秒）
 mq_type = 'kafka'  # 消息队列类型：kafka|rabbitmq
-mq_address = 'localhost:9092'  # 消息队列地址
+mq_address = ''  # 消息队列地址
 mq_topic = 'easydarwin.alerts'  # 告警推送topic
 heartbeat_timeout_sec = 90  # 算法服务心跳超时（秒）
 max_concurrent_infer = 5  # 最大并发推理任务数

@@ -14,6 +14,7 @@
           <template #extra>
             <a-space>
               <a-tag color="blue">{{ taskInfo.task_type }}</a-tag>
+              <a-tag color="cyan">{{ taskInfo.id }}</a-tag>
               <a-tag :color="regions.length > 0 ? 'green' : 'orange'">
                 {{ regions.length }}个区域
               </a-tag>
@@ -49,29 +50,45 @@
               
               <a-divider type="vertical" />
               
-              <a-button @click="deleteSelected" danger>
+              <a-button @click="deleteSelected" danger :disabled="!canvas">
                 <template #icon><DeleteOutlined /></template>
                 删除选中
               </a-button>
               
-              <a-button @click="clearAll">
+              <a-button @click="clearAll" :disabled="regions.length === 0">
                 <template #icon><ClearOutlined /></template>
                 清空全部
               </a-button>
               
               <a-divider type="vertical" />
               
-              <a-button @click="resetCanvas">
+              <a-button @click="resetCanvas" :disabled="!canvas">
                 <template #icon><ReloadOutlined /></template>
                 重置
               </a-button>
             </a-space>
           </div>
           
-          <!-- Canvas画布 -->
-          <div class="canvas-wrapper">
-            <canvas id="algo-canvas" ref="canvasRef"></canvas>
-          </div>
+          <!-- 状态提示 -->
+          <a-alert 
+            v-if="!backgroundImage && !imageLoading"
+            message="预览图片未加载"
+            description="请确保任务已生成预览图。如果预览图不显示，请稍候刷新或重新添加任务。"
+            type="warning"
+            show-icon
+            style="margin-bottom: 12px"
+          />
+          
+          <a-spin :spinning="imageLoading" tip="正在加载预览图片...">
+            <!-- Canvas画布 -->
+            <div class="canvas-wrapper" :class="{ 'has-image': backgroundImage }">
+              <canvas id="algo-canvas" ref="canvasRef"></canvas>
+              <div v-if="!backgroundImage && !imageLoading" class="canvas-placeholder">
+                <PictureOutlined style="font-size: 48px; color: #d9d9d9;" />
+                <div style="margin-top: 8px; color: #999;">等待预览图片加载...</div>
+              </div>
+            </div>
+          </a-spin>
           
           <!-- 提示信息 -->
           <a-alert 
@@ -82,14 +99,45 @@
             closable
             style="margin-top: 8px"
           />
+          <a-alert 
+            v-if="drawMode === 'line'" 
+            message="线段绘制：点击起点，再点击终点完成"
+            type="info"
+            show-icon
+            closable
+            style="margin-top: 8px"
+          />
+          <a-alert 
+            v-if="drawMode === 'rect'" 
+            message="矩形绘制：点击一个角，再点击对角完成"
+            type="info"
+            show-icon
+            closable
+            style="margin-top: 8px"
+          />
         </a-card>
       </div>
       
       <!-- 右侧配置面板 -->
       <div class="config-panel">
+        <!-- 图片信息 -->
+        <a-card size="small" class="mb-3" v-if="backgroundImage">
+          <a-descriptions size="small" :column="1" bordered>
+            <a-descriptions-item label="预览图">
+              <a-tag color="green">已加载</a-tag>
+            </a-descriptions-item>
+            <a-descriptions-item label="分辨率">
+              {{ Math.floor(backgroundImage.width) }} x {{ Math.floor(backgroundImage.height) }}
+            </a-descriptions-item>
+            <a-descriptions-item label="画布尺寸">
+              {{ canvas ? canvas.width : 0 }} x {{ canvas ? canvas.height : 0 }}
+            </a-descriptions-item>
+          </a-descriptions>
+        </a-card>
+        
         <a-card title="区域配置" size="small">
           <template #extra>
-            <a-button type="primary" @click="saveConfig" :loading="saving">
+            <a-button type="primary" @click="saveConfig" :loading="saving" :disabled="!backgroundImage">
               <template #icon><SaveOutlined /></template>
               保存配置
             </a-button>
@@ -226,7 +274,8 @@ import { ref, onMounted, watch, nextTick } from 'vue'
 import { message } from 'ant-design-vue'
 import { 
   LineOutlined, BorderOutlined, AppstoreOutlined,
-  DeleteOutlined, ClearOutlined, ReloadOutlined, SaveOutlined
+  DeleteOutlined, ClearOutlined, ReloadOutlined, SaveOutlined,
+  PictureOutlined
 } from '@ant-design/icons-vue'
 import { fabric } from 'fabric'
 import { frameApi } from '@/api'
@@ -253,6 +302,7 @@ const drawMode = ref(null) // 'line' | 'rect' | 'polygon'
 const regions = ref([])
 const activeRegion = ref([])
 const saving = ref(false)
+const imageLoading = ref(false)
 const polygonPoints = ref([])
 const tempPolygonLine = ref(null)
 
@@ -278,15 +328,18 @@ watch(visible, (val) => {
 // 初始化Canvas
 const initCanvas = async () => {
   try {
-    // 创建Fabric Canvas
+    // 创建Fabric Canvas（初始尺寸，加载图片后会调整）
     canvas = new fabric.Canvas('algo-canvas', {
       width: 800,
       height: 600,
-      backgroundColor: '#f0f0f0',
-      selection: true
+      backgroundColor: '#f5f5f5',
+      selection: true,
+      preserveObjectStacking: true
     })
     
-    // 加载预览图片
+    console.log('Canvas initialized, loading preview image...')
+    
+    // 加载预览图片（会自动调整画布尺寸）
     await loadPreviewImage()
     
     // 加载已有配置
@@ -294,6 +347,8 @@ const initCanvas = async () => {
     
     // 绑定事件
     bindCanvasEvents()
+    
+    console.log('Canvas setup complete')
     
   } catch (error) {
     console.error('初始化Canvas失败:', error)
@@ -303,38 +358,75 @@ const initCanvas = async () => {
 
 // 加载预览图片
 const loadPreviewImage = async () => {
+  imageLoading.value = true
   try {
     const { data } = await frameApi.getPreviewImage(props.taskInfo.id)
     if (data && data.preview_image) {
-      // 构建图片URL（需要通过MinIO或后端代理）
-      const imageUrl = `/api/minio/preview/${data.preview_image}`
+      // 构建图片URL（通过后端MinIO代理）
+      const imageUrl = `/api/v1/minio/preview/${data.preview_image}`
+      
+      console.log('Loading preview image from:', imageUrl)
       
       fabric.Image.fromURL(imageUrl, (img) => {
-        if (!img) {
-          message.warning('预览图片加载失败，请确保已抽取预览帧')
+        imageLoading.value = false
+        
+        if (!img || img.width === 0) {
+          message.error('预览图片加载失败，请检查图片是否存在')
+          console.error('Image load failed or empty:', imageUrl)
           return
         }
         
-        // 缩放图片适应画布
+        // 根据图片尺寸调整画布大小（保持最大800x600）
+        const maxWidth = 800
+        const maxHeight = 600
         const scale = Math.min(
-          canvas.width / img.width,
-          canvas.height / img.height
+          maxWidth / img.width,
+          maxHeight / img.height,
+          1  // 不放大，只缩小
         )
         
+        const canvasWidth = Math.floor(img.width * scale)
+        const canvasHeight = Math.floor(img.height * scale)
+        
+        // 设置画布尺寸
+        canvas.setDimensions({
+          width: canvasWidth,
+          height: canvasHeight
+        })
+        
+        // 缩放图片
         img.scale(scale)
         img.set({
           left: 0,
           top: 0,
           selectable: false,
-          evented: false
+          evented: false,
+          hasControls: false,
+          hasBorders: false,
+          lockMovementX: true,
+          lockMovementY: true
         })
         
         backgroundImage = img
         canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas))
-      }, { crossOrigin: 'anonymous' })
+        
+        message.success(`预览图片加载成功 (${img.width}x${img.height})`)
+        console.log('Preview image loaded:', {
+          original: `${img.width}x${img.height}`,
+          canvas: `${canvasWidth}x${canvasHeight}`,
+          scale: scale
+        })
+      }, { 
+        crossOrigin: 'anonymous'
+      })
+    } else {
+      imageLoading.value = false
+      message.warning('预览图片尚未生成，请等待或重新添加任务')
     }
   } catch (error) {
+    imageLoading.value = false
     console.error('加载预览图片失败:', error)
+    message.error('加载预览图片失败: ' + (error.response?.data?.error || error.message))
   }
 }
 
@@ -749,14 +841,33 @@ onMounted(() => {
 
 .canvas-wrapper {
   position: relative;
-  border: 1px solid #d9d9d9;
-  border-radius: 4px;
+  border: 2px dashed #d9d9d9;
+  border-radius: 8px;
   overflow: hidden;
-  background: #f0f0f0;
+  background: #fafafa;
+  min-height: 400px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+}
+
+.canvas-wrapper.has-image {
+  border: 2px solid #1890ff;
+  background: #fff;
+}
+
+.canvas-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
 }
 
 #algo-canvas {
   display: block;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 
 .regions-list {
@@ -766,6 +877,10 @@ onMounted(() => {
 
 :deep(.ant-collapse-item) {
   margin-bottom: 8px;
+}
+
+.mb-3 {
+  margin-bottom: 12px;
 }
 </style>
 

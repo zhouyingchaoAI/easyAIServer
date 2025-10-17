@@ -16,6 +16,7 @@ type AlgorithmRegistry struct {
 	log       *slog.Logger
 	timeout   time.Duration // heartbeat timeout
 	stopCheck chan struct{}
+	onRegisterCallback func(serviceID string, taskTypes []string) // 注册回调
 }
 
 // NewRegistry 创建注册中心
@@ -29,6 +30,11 @@ func NewRegistry(timeoutSec int, logger *slog.Logger) *AlgorithmRegistry {
 		timeout:   time.Duration(timeoutSec) * time.Second,
 		stopCheck: make(chan struct{}),
 	}
+}
+
+// SetOnRegisterCallback 设置注册回调
+func (r *AlgorithmRegistry) SetOnRegisterCallback(callback func(serviceID string, taskTypes []string)) {
+	r.onRegisterCallback = callback
 }
 
 // Register 注册算法服务
@@ -61,6 +67,11 @@ func (r *AlgorithmRegistry) Register(service conf.AlgorithmService) error {
 		slog.String("name", service.Name),
 		slog.Any("task_types", service.TaskTypes),
 		slog.String("endpoint", service.Endpoint))
+
+	// 触发注册回调（异步）
+	if r.onRegisterCallback != nil {
+		go r.onRegisterCallback(service.ServiceID, service.TaskTypes)
+	}
 
 	return nil
 }

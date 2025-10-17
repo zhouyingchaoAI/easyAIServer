@@ -254,6 +254,16 @@
           <template v-else-if="column.key==='task_type'">
             <a-tag color="purple">{{ record.task_type || '未分类' }}</a-tag>
           </template>
+          <template v-else-if="column.key==='config_status'">
+            <a-tag :color="record.config_status === 'configured' ? 'green' : 'orange'">
+              <template v-if="record.config_status === 'configured'">
+                <CheckCircleOutlined /> 已配置
+              </template>
+              <template v-else>
+                <WarningOutlined /> 待配置
+              </template>
+            </a-tag>
+          </template>
           <template v-else-if="column.key==='status'">
             <a-tag :color="record.enabled ? 'green' : 'default'">
               {{ record.enabled ? '运行中' : '已停止' }}
@@ -297,6 +307,16 @@
           </template>
           <template v-else-if="column.key==='action'">
             <a-space>
+              <a-tooltip title="算法配置">
+                <a-button 
+                  type="primary" 
+                  size="small" 
+                  @click="() => openAlgoConfig(record)"
+                  :disabled="!record.preview_image"
+                >
+                  <template #icon><SettingOutlined /></template>
+                </a-button>
+              </a-tooltip>
               <a-tooltip :title="record.enabled ? '停止抽帧' : '启动抽帧'">
                 <a-button 
                   :type="record.enabled ? 'default' : 'primary'"
@@ -316,7 +336,7 @@
                 </a-button>
               </a-tooltip>
               <a-tooltip title="编辑">
-                <a-button type="primary" size="small" @click="() => onEdit(record)">
+                <a-button type="default" size="small" @click="() => onEdit(record)">
                   <template #icon><EditOutlined /></template>
                 </a-button>
               </a-tooltip>
@@ -348,6 +368,12 @@
         </template>
       </a-table>
     </a-card>
+    <!-- 算法配置弹窗 -->
+    <AlgoConfigModal
+      v-model="algoConfigVisible"
+      :task-info="currentTask"
+      @saved="handleAlgoConfigSaved"
+    />
   </div>
   </template>
 
@@ -360,9 +386,11 @@ import {
   FolderOutlined, FolderOpenOutlined, ApiOutlined, InboxOutlined,
   KeyOutlined, LockOutlined, SaveOutlined, VideoCameraOutlined,
   TagOutlined, LinkOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
-  PictureOutlined, PlayCircleOutlined, PauseCircleOutlined, ReloadOutlined
+  PictureOutlined, PlayCircleOutlined, PauseCircleOutlined, ReloadOutlined,
+  SettingOutlined, CheckCircleOutlined, WarningOutlined
 } from '@ant-design/icons-vue'
 import { frameApi, live } from '@/api'
+import AlgoConfigModal from '@/components/AlgoConfigModal/index.vue'
 
 const router = useRouter()
 
@@ -391,14 +419,17 @@ const editingInterval = ref({})
 const liveStreams = ref([])
 const rtspOptions = ref([])
 const taskTypes = ref([])
+const algoConfigVisible = ref(false)
+const currentTask = ref({})
 
 const columns = [
   { title: '任务ID', key: 'id', width: 120 },
   { title: '任务类型', key: 'task_type', width: 120 },
+  { title: '配置状态', key: 'config_status', width: 100 },
   { title: '状态', key: 'status', width: 100 },
   { title: 'RTSP地址', key: 'rtsp_url', ellipsis: true },
   { title: '间隔', key: 'interval_ms', width: 100 },
-  { title: '操作', key: 'action', width: 280, fixed: 'right' },
+  { title: '操作', key: 'action', width: 350, fixed: 'right' },
 ]
 
 const fetchConfig = async () => {
@@ -623,6 +654,20 @@ const onUpdateInterval = async (record) => {
   } catch (e) {
     message.error(e?.response?.data?.error || '更新失败')
   }
+}
+
+const openAlgoConfig = (record) => {
+  if (!record.preview_image) {
+    message.warning('预览图片生成中，请稍后再试')
+    return
+  }
+  currentTask.value = record
+  algoConfigVisible.value = true
+}
+
+const handleAlgoConfigSaved = async () => {
+  message.success('算法配置已保存')
+  await fetchList()
 }
 
 onMounted(() => {

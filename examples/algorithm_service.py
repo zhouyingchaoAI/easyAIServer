@@ -119,11 +119,12 @@ class InferenceHandler(BaseHTTPRequestHandler):
             image_url = req_data.get('image_url')
             task_id = req_data.get('task_id')
             task_type = req_data.get('task_type')
+            algo_config = req_data.get('algo_config', {})  # 读取算法配置
             
-            logger.info(f"收到推理请求: task_id={task_id}, task_type={task_type}")
+            logger.info(f"收到推理请求: task_id={task_id}, task_type={task_type}, regions={len(algo_config.get('regions', []))}")
             
             # 执行推理（这里是模拟）
-            result = self.infer(image_url, task_type)
+            result = self.infer(image_url, task_type, algo_config)
             
             # 返回结果
             response = {
@@ -138,26 +139,35 @@ class InferenceHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(response).encode('utf-8'))
             
-            logger.info(f"推理完成: task_id={task_id}, result={result}")
+            logger.info(f"推理完成: task_id={task_id}, total_count={result.get('total_count', 0)}")
             
         except Exception as e:
             logger.error(f"推理失败: {e}")
             self.send_error(500, str(e))
     
-    def infer(self, image_url, task_type):
+    def infer(self, image_url, task_type, algo_config=None):
         """执行推理（示例实现）
         
         重要提示：
         1. 推理结果必须返回 total_count 字段表示检测对象数量
         2. 如果 total_count = 0，图片会被自动删除（启用 save_only_with_detection 时）
         3. 如果 total_count > 0，会保存告警记录并推送到消息队列
+        4. algo_config 包含区域配置和算法参数
         
         实际应用中应该：
         1. 下载图片: urllib.request.urlretrieve(image_url, '/tmp/image.jpg')
         2. 加载模型: model = YOLO('yolov8n.pt')
         3. 执行推理: results = model.predict('/tmp/image.jpg')
-        4. 解析结果并返回（必须包含 total_count）
+        4. 使用区域配置过滤结果
+        5. 解析结果并返回（必须包含 total_count）
         """
+        
+        # 提取算法配置
+        regions = []
+        params = {}
+        if algo_config:
+            regions = algo_config.get('regions', [])
+            params = algo_config.get('algorithm_params', {})
         
         # 模拟不同任务类型的推理结果
         if task_type == '人数统计':
@@ -166,11 +176,29 @@ class InferenceHandler(BaseHTTPRequestHandler):
                 {"class": "person", "confidence": 0.92, "bbox": [200, 220, 250, 320]},
                 {"class": "person", "confidence": 0.89, "bbox": [300, 240, 350, 340]}
             ]
-            return {
+            
+            # 如果有区域配置，添加区域结果
+            region_results = []
+            if regions:
+                for region in regions:
+                    if region.get('enabled', True):
+                        region_results.append({
+                            "region_id": region['id'],
+                            "region_name": region['name'],
+                            "count": len([d for d in detections]),  # 实际应该过滤在区域内的检测
+                            "alert": False
+                        })
+            
+            result = {
                 "total_count": len(detections),  # ✅ 检测到3个对象
                 "detections": detections,
                 "message": f"检测到{len(detections)}人"
             }
+            
+            if region_results:
+                result["region_results"] = region_results
+            
+            return result
         elif task_type == '人员跌倒':
             # 示例：未检测到跌倒 -> total_count = 0 -> 图片会被删除
             return {

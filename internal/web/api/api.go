@@ -8,6 +8,7 @@ package api
 import (
 	"encoding/json"
 	"io"
+	"time"
 	"easydarwin/internal/conf"
 	"easydarwin/internal/data"
     "easydarwin/internal/plugin/frameextractor"
@@ -340,6 +341,42 @@ func registerApp(g gin.IRouter) {
 			return
 		}
 		c.JSON(200, gin.H{"ok": true, "message": "task started with config"})
+	})
+	
+	// MinIO图片代理（用于前端显示预览图）
+	g.GET("/minio/preview/*path", func(c *gin.Context) {
+		path := c.Param("path")
+		if path == "" {
+			c.JSON(400, gin.H{"error": "path required"})
+			return
+		}
+		// 去掉开头的 /
+		if len(path) > 0 && path[0] == '/' {
+			path = path[1:]
+		}
+		
+		fx := frameextractor.GetGlobal()
+		if fx == nil {
+			c.JSON(500, gin.H{"error": "service not ready"})
+			return
+		}
+		
+		// 获取MinIO预签名URL
+		cfg := fx.GetConfig()
+		if cfg.Store != "minio" {
+			c.JSON(400, gin.H{"error": "not using minio storage"})
+			return
+		}
+		
+		// 生成预签名URL并重定向
+		presignedURL, err := fx.GetPresignedURL(path, 1*time.Hour)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		
+		// 重定向到MinIO URL
+		c.Redirect(http.StatusTemporaryRedirect, presignedURL)
 	})
 }
 

@@ -2,6 +2,7 @@ package aianalysis
 
 import (
 	"easydarwin/internal/conf"
+	"easydarwin/internal/plugin/frameextractor"
 	"fmt"
 	"log/slog"
 	"time"
@@ -71,6 +72,9 @@ func (s *Service) Start() error {
 	// 初始化注册中心
 	s.registry = NewRegistry(s.cfg.HeartbeatTimeoutSec, s.log)
 	s.registry.StartHeartbeatChecker()
+	
+	// 设置注册回调：算法服务上线时自动启动已配置的任务
+	s.registry.SetOnRegisterCallback(s.onAlgorithmServiceRegistered)
 
 	// 初始化智能队列
 	s.queue = NewInferenceQueue(
@@ -310,5 +314,44 @@ func (s *Service) initMessageQueue() error {
 		slog.String("topic", s.cfg.MQTopic))
 
 	return nil
+}
+
+// onAlgorithmServiceRegistered 算法服务注册时的回调
+func (s *Service) onAlgorithmServiceRegistered(serviceID string, taskTypes []string) {
+	s.log.Info("algorithm service online, checking tasks to auto-start",
+		slog.String("service_id", serviceID),
+		slog.Any("task_types", taskTypes))
+	
+	// 导入frameextractor包
+	fxService := s.getFrameExtractorService()
+	if fxService == nil {
+		s.log.Warn("frame extractor service not available")
+		return
+	}
+	
+	// 查找所有匹配task_type且已配置的抽帧任务
+	for _, taskType := range taskTypes {
+		tasks := fxService.GetTasksByType(taskType)
+		for _, task := range tasks {
+			// 只启动已配置但未运行的任务
+			if task.ConfigStatus == "configured" && !task.Enabled {
+				if err := fxService.StartTaskByID(task.ID); err != nil {
+					s.log.Error("failed to auto-start task",
+						slog.String("task_id", task.ID),
+						slog.String("err", err.Error()))
+				} else {
+					s.log.Info("auto-started task",
+						slog.String("task_id", task.ID),
+						slog.String("task_type", taskType),
+						slog.String("reason", "algorithm_service_online"))
+				}
+			}
+		}
+	}
+}
+
+// getFrameExtractorService 获取抽帧服务实例
+func (s *Service) getFrameExtractorService() *frameextractor.Service {
+	return frameextractor.GetGlobal()
 }
 

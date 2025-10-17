@@ -631,6 +631,23 @@ func (s *Service) GetTasksByType(taskType string) []conf.FrameExtractTask {
 	return result
 }
 
+// GetPresignedURL 获取MinIO预签名URL
+func (s *Service) GetPresignedURL(objectPath string, expiry time.Duration) (string, error) {
+	if s.minio == nil {
+		return "", fmt.Errorf("minio not initialized")
+	}
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	
+	presignedURL, err := s.minio.client.PresignedGetObject(ctx, s.minio.bucket, objectPath, expiry, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
+	}
+	
+	return presignedURL.String(), nil
+}
+
 // global accessor for API layer
 var gService *Service
 

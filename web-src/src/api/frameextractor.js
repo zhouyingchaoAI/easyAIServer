@@ -38,6 +38,22 @@ export default {
   },
   batchDeleteSnapshots(taskId, paths){
     return request({ url: `/frame_extractor/snapshots/${taskId}/batch_delete`, method: 'post', data: { paths } });
+  },
+  // 获取预览图片
+  getPreviewImage(taskId){
+    return request({ url: `/frame_extractor/tasks/${taskId}/preview`, method: 'get' });
+  },
+  // 保存算法配置
+  saveAlgoConfig(taskId, config){
+    return request({ url: `/frame_extractor/tasks/${taskId}/config`, method: 'post', data: config });
+  },
+  // 获取算法配置
+  getAlgoConfig(taskId){
+    return request({ url: `/frame_extractor/tasks/${taskId}/config`, method: 'get' });
+  },
+  // 配置完成后启动
+  startWithConfig(taskId){
+    return request({ url: `/frame_extractor/tasks/${taskId}/start_with_config`, method: 'post' });
   }
 }
 

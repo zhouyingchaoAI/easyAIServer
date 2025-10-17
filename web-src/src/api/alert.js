@@ -32,6 +32,14 @@ export default {
       url: '/ai_analysis/services',
       method: 'get'
     });
+  },
+  
+  // 获取所有任务ID列表
+  getTaskIds(){
+    return request({
+      url: '/alerts/task_ids',
+      method: 'get'
+    });
   }
 }
 

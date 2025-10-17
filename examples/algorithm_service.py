@@ -145,36 +145,76 @@ class InferenceHandler(BaseHTTPRequestHandler):
             self.send_error(500, str(e))
     
     def infer(self, image_url, task_type):
-        """执行推理（示例实现）"""
-        # 这里应该：
-        # 1. 下载图片: urllib.request.urlretrieve(image_url, '/tmp/image.jpg')
-        # 2. 加载模型: model = YOLO('yolov8n.pt')
-        # 3. 执行推理: results = model.predict('/tmp/image.jpg')
-        # 4. 解析结果并返回
+        """执行推理（示例实现）
+        
+        重要提示：
+        1. 推理结果必须返回 total_count 字段表示检测对象数量
+        2. 如果 total_count = 0，图片会被自动删除（启用 save_only_with_detection 时）
+        3. 如果 total_count > 0，会保存告警记录并推送到消息队列
+        
+        实际应用中应该：
+        1. 下载图片: urllib.request.urlretrieve(image_url, '/tmp/image.jpg')
+        2. 加载模型: model = YOLO('yolov8n.pt')
+        3. 执行推理: results = model.predict('/tmp/image.jpg')
+        4. 解析结果并返回（必须包含 total_count）
+        """
         
         # 模拟不同任务类型的推理结果
         if task_type == '人数统计':
+            detections = [
+                {"class": "person", "confidence": 0.95, "bbox": [100, 200, 150, 300]},
+                {"class": "person", "confidence": 0.92, "bbox": [200, 220, 250, 320]},
+                {"class": "person", "confidence": 0.89, "bbox": [300, 240, 350, 340]}
+            ]
             return {
-                "person_count": 23,
-                "objects": [
-                    {"class": "person", "confidence": 0.95, "bbox": [100, 200, 150, 300]},
-                    {"class": "person", "confidence": 0.92, "bbox": [200, 220, 250, 320]}
-                ]
+                "total_count": len(detections),  # ✅ 检测到3个对象
+                "detections": detections,
+                "message": f"检测到{len(detections)}人"
             }
         elif task_type == '人员跌倒':
+            # 示例：未检测到跌倒 -> total_count = 0 -> 图片会被删除
             return {
+                "total_count": 0,  # ❌ 未检测到跌倒（图片将被删除）
                 "fall_detected": False,
-                "persons": 3
+                "persons": 3,  # 虽然有3个人，但没有跌倒
+                "message": "未检测到跌倒"
             }
         elif task_type == '吸烟检测':
+            # 示例：检测到1个吸烟行为 -> 保存告警
             return {
+                "total_count": 1,  # ✅ 检测到1个吸烟行为
                 "smoking_detected": True,
-                "location": {"x": 320, "y": 240},
-                "confidence": 0.87
+                "detections": [
+                    {"location": {"x": 320, "y": 240}, "confidence": 0.87}
+                ],
+                "message": "检测到吸烟行为"
+            }
+        elif task_type == '车辆检测':
+            # 示例：检测到多辆车
+            vehicles = [
+                {"class": "car", "confidence": 0.96, "bbox": [50, 100, 200, 300]},
+                {"class": "truck", "confidence": 0.88, "bbox": [250, 120, 400, 320]},
+            ]
+            return {
+                "total_count": len(vehicles),  # ✅ 检测到2辆车
+                "detections": vehicles,
+                "message": f"检测到{len(vehicles)}辆车"
+            }
+        elif task_type == '安全帽检测':
+            # 示例：有人未戴安全帽
+            violations = [
+                {"person_id": 1, "has_helmet": False, "confidence": 0.93, "bbox": [100, 150, 180, 280]}
+            ]
+            return {
+                "total_count": len(violations),  # ✅ 检测到1个违规
+                "violations": violations,
+                "message": f"检测到{len(violations)}人未戴安全帽"
             }
         else:
+            # 未知任务类型 -> total_count = 0 -> 图片会被删除
             return {
-                "message": f"No handler for task_type: {task_type}"
+                "total_count": 0,  # ❌ 未知任务类型（图片将被删除）
+                "message": f"未支持的任务类型: {task_type}"
             }
     
     def log_message(self, format, *args):

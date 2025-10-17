@@ -20,17 +20,31 @@
         :loading="loading"
         row-key="service_id" 
         :pagination="false"
+        :scroll="{ x: 1400 }"
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.key==='service_id'">
-            <a-tag color="blue">{{ record.service_id }}</a-tag>
+            <a-tooltip :title="record.service_id">
+              <a-tag color="blue" style="max-width: 160px; overflow: hidden; text-overflow: ellipsis;">
+                {{ record.service_id }}
+              </a-tag>
+            </a-tooltip>
           </template>
           <template v-else-if="column.key==='task_types'">
-            <a-space>
-              <a-tag v-for="type in record.task_types" :key="type" color="purple">
-                {{ type }}
-              </a-tag>
-            </a-space>
+            <div style="max-height: 100px; overflow-y: auto;">
+              <a-space wrap size="small">
+                <a-tag v-for="type in record.task_types" :key="type" color="purple" style="margin-bottom: 4px;">
+                  {{ type }}
+                </a-tag>
+              </a-space>
+            </div>
+          </template>
+          <template v-else-if="column.key==='endpoint'">
+            <a-tooltip :title="record.endpoint">
+              <span style="display: block; max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                {{ record.endpoint }}
+              </span>
+            </a-tooltip>
           </template>
           <template v-else-if="column.key==='status'">
             <a-badge :status="getServiceStatus(record)" :text="getServiceStatusText(record)" />
@@ -66,14 +80,14 @@ const loading = ref(false)
 const services = ref([])
 
 const columns = [
-  { title: '服务ID', key: 'service_id', width: 200 },
-  { title: '服务名称', key: 'name', width: 200 },
-  { title: '支持的任务类型', key: 'task_types', width: 300 },
-  { title: '推理端点', key: 'endpoint', ellipsis: true },
-  { title: '版本', key: 'version', width: 100 },
-  { title: '状态', key: 'status', width: 120 },
-  { title: '注册时间', key: 'register_at', width: 180 },
-  { title: '最后心跳', key: 'last_heartbeat', width: 180 },
+  { title: '服务ID', key: 'service_id', width: 180, ellipsis: true },
+  { title: '服务名称', key: 'name', width: 150 },
+  { title: '支持的任务类型', key: 'task_types', width: 280 },
+  { title: '推理端点', key: 'endpoint', width: 250, ellipsis: true },
+  { title: '版本', key: 'version', width: 90 },
+  { title: '状态', key: 'status', width: 110 },
+  { title: '注册时间', key: 'register_at', width: 170 },
+  { title: '最后心跳', key: 'last_heartbeat', width: 170 },
 ]
 
 const fetchServices = async () => {

@@ -49,7 +49,8 @@ func (s *Service) Start() error {
 	s.log.Info("starting AI analysis plugin",
 		slog.Int("scan_interval", s.cfg.ScanIntervalSec),
 		slog.String("mq_type", s.cfg.MQType),
-		slog.String("mq_address", s.cfg.MQAddress))
+		slog.String("mq_address", s.cfg.MQAddress),
+		slog.Bool("save_only_with_detection", s.cfg.SaveOnlyWithDetection))
 
 	// 检查Frame Extractor是否使用MinIO
 	if s.fxCfg.Store != "minio" {
@@ -76,6 +77,9 @@ func (s *Service) Start() error {
 		100,                    // 最大队列容量
 		StrategyDropOldest,     // 丢弃最旧的策略
 		50,                     // 积压50张告警
+		minioClient,            // MinIO客户端
+		s.fxCfg.MinIO.Bucket,   // MinIO bucket
+		true,                   // 丢弃图片时删除MinIO文件
 		s.log,
 	)
 
@@ -112,7 +116,7 @@ func (s *Service) Start() error {
 	})
 
 	// 初始化调度器
-	s.scheduler = NewScheduler(s.registry, minioClient, s.fxCfg.MinIO.Bucket, s.mq, s.cfg.MaxConcurrentInfer, s.log)
+	s.scheduler = NewScheduler(s.registry, minioClient, s.fxCfg.MinIO.Bucket, s.mq, s.cfg.MaxConcurrentInfer, s.cfg.SaveOnlyWithDetection, s.log)
 
 	// 初始化扫描器
 	s.scanner = NewScanner(minioClient, s.fxCfg.MinIO.Bucket, s.fxCfg.MinIO.BasePath, s.log)

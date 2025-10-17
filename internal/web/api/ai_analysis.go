@@ -165,5 +165,16 @@ func registerAlertAPI(g gin.IRouter) {
 
 		c.JSON(200, gin.H{"ok": true})
 	})
+	
+	// 获取所有任务ID列表
+	alerts.GET("/task_ids", func(c *gin.Context) {
+		taskIDs, err := data.GetDistinctTaskIDs()
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(200, gin.H{"task_ids": taskIDs})
+	})
 }
 

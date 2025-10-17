@@ -94,13 +94,14 @@ func (am *AlertManager) SendAlert(alert SystemAlert) {
 func (am *AlertManager) saveToDatabase(alert SystemAlert) {
 	// 创建系统告警记录
 	dbAlert := &model.Alert{
-		TaskID:        "system",
-		TaskType:      string(alert.Type),
-		AlgorithmID:   "system_monitor",
-		AlgorithmName: "系统监控",
-		Result:        alert.Message,
-		Confidence:    1.0,
-		CreatedAt:     alert.Timestamp,
+		TaskID:         "system",
+		TaskType:       string(alert.Type),
+		AlgorithmID:    "system_monitor",
+		AlgorithmName:  "系统监控",
+		Result:         alert.Message,
+		Confidence:     1.0,
+		DetectionCount: 0, // 系统告警没有检测个数
+		CreatedAt:      alert.Timestamp,
 	}
 	
 	if err := data.CreateAlert(dbAlert); err != nil {

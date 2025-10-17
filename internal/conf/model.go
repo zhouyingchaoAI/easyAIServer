@@ -441,6 +441,7 @@ type AIAnalysisConfig struct {
 	MQTopic             string `json:"mq_topic" mapstructure:"mq_topic"`
 	HeartbeatTimeoutSec int    `json:"heartbeat_timeout_sec" mapstructure:"heartbeat_timeout_sec"`
 	MaxConcurrentInfer  int    `json:"max_concurrent_infer" mapstructure:"max_concurrent_infer"`
+	SaveOnlyWithDetection bool `json:"save_only_with_detection" mapstructure:"save_only_with_detection"` // 只保存有检测结果的告警
 }
 
 // AlgorithmService 算法服务注册信息

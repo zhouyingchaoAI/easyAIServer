@@ -1,9 +1,12 @@
 package aianalysis
 
 import (
+	"context"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/minio/minio-go/v7"
 )
 
 // QueueStrategy 队列策略
@@ -28,6 +31,9 @@ type InferenceQueue struct {
 	alertInterval    time.Duration
 	log              *slog.Logger
 	alertCallback    func(AlertInfo)
+	minio            *minio.Client // MinIO客户端
+	bucket           string         // MinIO bucket
+	deleteDropped    bool           // 是否删除丢弃的图片
 }
 
 // AlertInfo 告警信息
@@ -41,7 +47,7 @@ type AlertInfo struct {
 }
 
 // NewInferenceQueue 创建智能队列
-func NewInferenceQueue(maxSize int, strategy QueueStrategy, alertThreshold int, logger *slog.Logger) *InferenceQueue {
+func NewInferenceQueue(maxSize int, strategy QueueStrategy, alertThreshold int, minioClient *minio.Client, bucket string, deleteDropped bool, logger *slog.Logger) *InferenceQueue {
 	if maxSize <= 0 {
 		maxSize = 100
 	}
@@ -56,6 +62,9 @@ func NewInferenceQueue(maxSize int, strategy QueueStrategy, alertThreshold int, 
 		alertThreshold: alertThreshold,
 		alertInterval:  60 * time.Second,
 		log:            logger,
+		minio:          minioClient,
+		bucket:         bucket,
+		deleteDropped:  deleteDropped,
 	}
 }
 
@@ -79,6 +88,12 @@ func (q *InferenceQueue) Add(images []ImageInfo) int {
 				dropped := q.images[0]
 				q.images = q.images[1:]
 				q.droppedCount++
+				
+				// 删除MinIO中的图片
+				if q.deleteDropped {
+					q.deleteImageFromMinIO(dropped)
+				}
+				
 				q.log.Warn("queue full, dropped oldest image",
 					slog.String("task_type", dropped.TaskType),
 					slog.String("task_id", dropped.TaskID),
@@ -89,15 +104,31 @@ func (q *InferenceQueue) Add(images []ImageInfo) int {
 			case StrategyDropNewest:
 				// 丢弃新的（不加入）
 				q.droppedCount++
+				
+				// 删除MinIO中的图片
+				if q.deleteDropped {
+					q.deleteImageFromMinIO(img)
+				}
+				
 				q.log.Warn("queue full, dropped newest image",
 					slog.String("image", img.Filename))
 				continue
 				
 			case StrategyLatestOnly:
 				// 清空队列，只保留最新的
+				oldImages := make([]ImageInfo, len(q.images))
+				copy(oldImages, q.images)
 				oldLen := len(q.images)
 				q.images = q.images[:0]
 				q.droppedCount += int64(oldLen)
+				
+				// 批量删除MinIO中的图片
+				if q.deleteDropped {
+					for _, droppedImg := range oldImages {
+						q.deleteImageFromMinIO(droppedImg)
+					}
+				}
+				
 				q.log.Warn("queue full, cleared for latest images",
 					slog.Int("cleared", oldLen))
 			}
@@ -232,5 +263,30 @@ func (q *InferenceQueue) GetDropRate() float64 {
 	}
 	
 	return float64(q.droppedCount) / float64(total)
+}
+
+// deleteImageFromMinIO 删除MinIO中的图片
+func (q *InferenceQueue) deleteImageFromMinIO(img ImageInfo) {
+	if q.minio == nil || q.bucket == "" {
+		return
+	}
+	
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		
+		err := q.minio.RemoveObject(ctx, q.bucket, img.Path, minio.RemoveObjectOptions{})
+		if err != nil {
+			q.log.Warn("failed to delete dropped image from MinIO",
+				slog.String("path", img.Path),
+				slog.String("err", err.Error()))
+			return
+		}
+		
+		q.log.Debug("dropped image deleted from MinIO",
+			slog.String("path", img.Path),
+			slog.String("task_type", img.TaskType),
+			slog.String("task_id", img.TaskID))
+	}()
 }
 

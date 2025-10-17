@@ -22,7 +22,7 @@
 
       <!-- 筛选器 -->
       <a-row :gutter="16" class="mb-4">
-        <a-col :xs="24" :sm="8" :md="6">
+        <a-col :xs="24" :sm="12" :md="6">
           <a-select 
             v-model:value="filter.task_type" 
             placeholder="任务类型" 
@@ -36,22 +36,50 @@
             </a-select-option>
           </a-select>
         </a-col>
-        <a-col :xs="24" :sm="8" :md="6">
-          <a-input 
+        <a-col :xs="24" :sm="12" :md="5">
+          <a-select 
             v-model:value="filter.task_id" 
             placeholder="任务ID" 
             allow-clear
+            show-search
             size="large"
-            @pressEnter="fetchData"
+            :filter-option="filterOption"
+            @change="fetchData"
           >
-            <template #prefix><SearchOutlined /></template>
-          </a-input>
+            <a-select-option value="">全部任务</a-select-option>
+            <a-select-option v-for="taskId in taskIds" :key="taskId" :value="taskId">
+              {{ taskId }}
+            </a-select-option>
+          </a-select>
         </a-col>
-        <a-col :xs="24" :sm="8" :md="6">
-          <a-button type="primary" size="large" @click="fetchData">
-            <template #icon><SearchOutlined /></template>
-            查询
-          </a-button>
+        <a-col :xs="12" :sm="12" :md="4">
+          <a-input-number 
+            v-model:value="filter.min_detections" 
+            placeholder="最少检测数" 
+            :min="0"
+            size="large"
+            style="width: 100%"
+          />
+        </a-col>
+        <a-col :xs="12" :sm="12" :md="4">
+          <a-input-number 
+            v-model:value="filter.max_detections" 
+            placeholder="最多检测数" 
+            :min="0"
+            size="large"
+            style="width: 100%"
+          />
+        </a-col>
+        <a-col :xs="24" :sm="12" :md="5">
+          <a-space>
+            <a-button type="primary" size="large" @click="fetchData">
+              <template #icon><SearchOutlined /></template>
+              查询
+            </a-button>
+            <a-button size="large" @click="resetFilter">
+              重置
+            </a-button>
+          </a-space>
         </a-col>
       </a-row>
 
@@ -77,6 +105,13 @@
           </template>
           <template v-else-if="column.key==='algorithm_name'">
             <a-tag color="green">{{ record.algorithm_name }}</a-tag>
+          </template>
+          <template v-else-if="column.key==='detection_count'">
+            <a-badge 
+              :count="record.detection_count" 
+              :number-style="{ backgroundColor: record.detection_count > 0 ? '#52c41a' : '#d9d9d9' }"
+              :show-zero="true"
+            />
           </template>
           <template v-else-if="column.key==='confidence'">
             <a-progress 
@@ -149,6 +184,13 @@
                     <span class="text-gray-500 text-xs">{{ currentAlert.algorithm_id }}</span>
                   </div>
                 </a-descriptions-item>
+                <a-descriptions-item label="检测个数">
+                  <a-badge 
+                    :count="currentAlert.detection_count || 0" 
+                    :number-style="{ backgroundColor: '#1890ff' }"
+                    :show-zero="true"
+                  />
+                </a-descriptions-item>
                 <a-descriptions-item label="置信度">
                   <a-progress 
                     :percent="Math.round(currentAlert.confidence * 100)" 
@@ -192,12 +234,15 @@ const router = useRouter()
 const loading = ref(false)
 const alerts = ref([])
 const taskTypes = ref([])
+const taskIds = ref([])
 const detailVisible = ref(false)
 const currentAlert = ref(null)
 
 const filter = ref({
   task_id: '',
   task_type: '',
+  min_detections: undefined,
+  max_detections: undefined,
   page: 1,
   page_size: 20
 })
@@ -215,6 +260,7 @@ const columns = [
   { title: '任务类型', key: 'task_type', width: 120 },
   { title: '任务ID', key: 'task_id', width: 150 },
   { title: '算法', key: 'algorithm_name', width: 150 },
+  { title: '检测数', key: 'detection_count', width: 90 },
   { title: '置信度', key: 'confidence', width: 120 },
   { title: '图片路径', key: 'image_path', ellipsis: true },
   { title: '推理时间', key: 'inference_time_ms', width: 100 },
@@ -244,6 +290,19 @@ const fetchTaskTypes = async () => {
   } catch (e) {
     console.error('fetch task types failed', e)
   }
+}
+
+const fetchTaskIds = async () => {
+  try {
+    const { data } = await alertApi.getTaskIds()
+    taskIds.value = data?.task_ids || []
+  } catch (e) {
+    console.error('fetch task ids failed', e)
+  }
+}
+
+const filterOption = (input, option) => {
+  return option.value.toLowerCase().includes(input.toLowerCase())
 }
 
 const handleTableChange = (pag) => {
@@ -293,9 +352,22 @@ const goToServices = () => {
   router.push('/ai-services')
 }
 
+const resetFilter = () => {
+  filter.value = {
+    task_id: '',
+    task_type: '',
+    min_detections: undefined,
+    max_detections: undefined,
+    page: 1,
+    page_size: 20
+  }
+  fetchData()
+}
+
 onMounted(() => {
   fetchData()
   fetchTaskTypes()
+  fetchTaskIds()
 })
 </script>
 

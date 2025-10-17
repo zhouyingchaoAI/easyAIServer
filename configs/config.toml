@@ -222,9 +222,10 @@ enabled = true
 
 [ai_analysis]
 enable = true  # 启用智能分析插件
-scan_interval_sec = 10  # MinIO扫描间隔（秒）
+scan_interval_sec = 5  # MinIO扫描间隔（秒）
 mq_type = 'kafka'  # 消息队列类型：kafka|rabbitmq
 mq_address = ''  # 消息队列地址
 mq_topic = 'easydarwin.alerts'  # 告警推送topic
 heartbeat_timeout_sec = 90  # 算法服务心跳超时（秒）
-max_concurrent_infer = 5  # 最大并发推理任务数
+max_concurrent_infer = 20  # 最大并发推理任务数
+save_only_with_detection = true  # 只保存有检测结果的告警，无检测结果的图片将被删除

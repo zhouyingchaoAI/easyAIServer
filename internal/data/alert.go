@@ -23,6 +23,12 @@ func ListAlerts(filter model.AlertFilter) ([]model.Alert, int64, error) {
 	if filter.TaskType != "" {
 		db = db.Where("task_type = ?", filter.TaskType)
 	}
+	if filter.MinDetections > 0 {
+		db = db.Where("detection_count >= ?", filter.MinDetections)
+	}
+	if filter.MaxDetections > 0 {
+		db = db.Where("detection_count <= ?", filter.MaxDetections)
+	}
 	if !filter.StartTime.IsZero() {
 		db = db.Where("created_at >= ?", filter.StartTime)
 	}
@@ -68,6 +74,22 @@ func GetAlertByID(id uint) (*model.Alert, error) {
 // DeleteAlert 删除告警
 func DeleteAlert(id uint) error {
 	return GetDatabase().Delete(&model.Alert{}, id).Error
+}
+
+// GetDistinctTaskIDs 获取所有不重复的任务ID列表
+func GetDistinctTaskIDs() ([]string, error) {
+	var taskIDs []string
+	err := GetDatabase().Model(&model.Alert{}).
+		Distinct("task_id").
+		Where("task_id != ''").
+		Order("task_id ASC").
+		Pluck("task_id", &taskIDs).Error
+	
+	if err != nil {
+		return nil, err
+	}
+	
+	return taskIDs, nil
 }
 
 // AutoMigrate 自动迁移alert表

@@ -6,6 +6,8 @@
 package api
 
 import (
+	"encoding/json"
+	"io"
 	"easydarwin/internal/conf"
 	"easydarwin/internal/data"
     "easydarwin/internal/plugin/frameextractor"
@@ -254,6 +256,90 @@ func registerApp(g gin.IRouter) {
 		}
 		running := fx.GetTaskStatus(id)
 		c.JSON(200, gin.H{"running": running})
+	})
+	// get preview image
+	fem.GET("/tasks/:id/preview", func(c *gin.Context) {
+		id := c.Param("id")
+		fx := frameextractor.GetGlobal()
+		if fx == nil {
+			c.JSON(500, gin.H{"error": "service not ready"})
+			return
+		}
+		tasks := fx.ListTasks()
+		var previewImage string
+		for _, task := range tasks {
+			if task.ID == id {
+				previewImage = task.PreviewImage
+				break
+			}
+		}
+		if previewImage == "" {
+			c.JSON(404, gin.H{"error": "preview image not found"})
+			return
+		}
+		c.JSON(200, gin.H{"preview_image": previewImage, "ok": true})
+	})
+	// save algorithm config
+	fem.POST("/tasks/:id/config", func(c *gin.Context) {
+		id := c.Param("id")
+		fx := frameextractor.GetGlobal()
+		if fx == nil {
+			c.JSON(500, gin.H{"error": "service not ready"})
+			return
+		}
+		// read raw JSON body
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "failed to read body"})
+			return
+		}
+		// validate JSON
+		var temp interface{}
+		if err := json.Unmarshal(body, &temp); err != nil {
+			c.JSON(400, gin.H{"error": "invalid JSON format"})
+			return
+		}
+		// save config
+		if err := fx.SaveAlgorithmConfig(id, body); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"ok": true, "message": "algorithm config saved"})
+	})
+	// get algorithm config
+	fem.GET("/tasks/:id/config", func(c *gin.Context) {
+		id := c.Param("id")
+		fx := frameextractor.GetGlobal()
+		if fx == nil {
+			c.JSON(500, gin.H{"error": "service not ready"})
+			return
+		}
+		config, err := fx.GetAlgorithmConfig(id)
+		if err != nil {
+			c.JSON(404, gin.H{"error": err.Error()})
+			return
+		}
+		// parse JSON and return
+		var configMap map[string]interface{}
+		if err := json.Unmarshal(config, &configMap); err != nil {
+			c.JSON(500, gin.H{"error": "failed to parse config"})
+			return
+		}
+		c.JSON(200, configMap)
+	})
+	// start task with config
+	fem.POST("/tasks/:id/start_with_config", func(c *gin.Context) {
+		id := c.Param("id")
+		fx := frameextractor.GetGlobal()
+		if fx == nil {
+			c.JSON(500, gin.H{"error": "service not ready"})
+			return
+		}
+		if err := fx.StartWithConfig(id); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"ok": true, "message": "task started with config"})
 	})
 }
 

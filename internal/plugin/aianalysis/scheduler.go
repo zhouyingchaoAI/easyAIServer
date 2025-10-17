@@ -7,6 +7,7 @@ import (
 	"easydarwin/internal/conf"
 	"easydarwin/internal/data"
 	"easydarwin/internal/data/model"
+	"easydarwin/internal/plugin/frameextractor"
 	"fmt"
 	"io"
 	"log/slog"
@@ -102,12 +103,25 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 		return
 	}
 
+	// 读取算法配置（如果存在）
+	var algoConfig map[string]interface{}
+	if fxService := s.getFrameExtractorService(); fxService != nil {
+		if configBytes, err := fxService.GetAlgorithmConfig(image.TaskID); err == nil {
+			if err := json.Unmarshal(configBytes, &algoConfig); err != nil {
+				s.log.Warn("failed to parse algo config",
+					slog.String("task_id", image.TaskID),
+					slog.String("err", err.Error()))
+			}
+		}
+	}
+
 	// 构建推理请求
 	req := conf.InferenceRequest{
-		ImageURL:  presignedURL.String(),
-		TaskID:    image.TaskID,
-		TaskType:  image.TaskType,
-		ImagePath: image.Path,
+		ImageURL:   presignedURL.String(),
+		TaskID:     image.TaskID,
+		TaskType:   image.TaskType,
+		ImagePath:  image.Path,
+		AlgoConfig: algoConfig,
 	}
 
 	// 记录推理开始时间
@@ -336,5 +350,10 @@ func (s *Scheduler) deleteImageWithReason(imagePath, reason string) error {
 		slog.String("reason", reason))
 	
 	return nil
+}
+
+// getFrameExtractorService 获取抽帧服务实例
+func (s *Scheduler) getFrameExtractorService() *frameextractor.Service {
+	return frameextractor.GetGlobal()
 }
 

@@ -314,12 +314,14 @@ type MinIOConfig struct {
 }
 
 type FrameExtractTask struct {
-    ID         string `json:"id" mapstructure:"id"`
-    TaskType   string `json:"task_type" mapstructure:"task_type"` // 任务类型，用于智能分析
-    RtspURL    string `json:"rtsp_url" mapstructure:"rtsp_url"`
-    IntervalMs int    `json:"interval_ms" mapstructure:"interval_ms"`
-    OutputPath string `json:"output_path" mapstructure:"output_path"`
-    Enabled    bool   `json:"enabled" mapstructure:"enabled"` // task running state
+    ID           string `json:"id" mapstructure:"id"`
+    TaskType     string `json:"task_type" mapstructure:"task_type"` // 任务类型，用于智能分析
+    RtspURL      string `json:"rtsp_url" mapstructure:"rtsp_url"`
+    IntervalMs   int    `json:"interval_ms" mapstructure:"interval_ms"`
+    OutputPath   string `json:"output_path" mapstructure:"output_path"`
+    Enabled      bool   `json:"enabled" mapstructure:"enabled"` // task running state
+    ConfigStatus string `json:"config_status" mapstructure:"config_status"` // 配置状态: "unconfigured" | "configured"
+    PreviewImage string `json:"preview_image" mapstructure:"preview_image"` // 预览图片路径
 }
 type RecordConfig struct {
 	EnableFlv            bool   `json:"enable_flv"`
@@ -457,10 +459,11 @@ type AlgorithmService struct {
 
 // InferenceRequest 推理请求
 type InferenceRequest struct {
-	ImageURL  string `json:"image_url"`  // MinIO预签名URL
-	TaskID    string `json:"task_id"`    // 任务ID
-	TaskType  string `json:"task_type"`  // 任务类型
-	ImagePath string `json:"image_path"` // MinIO对象路径
+	ImageURL   string                 `json:"image_url"`   // MinIO预签名URL
+	TaskID     string                 `json:"task_id"`     // 任务ID
+	TaskType   string                 `json:"task_type"`   // 任务类型
+	ImagePath  string                 `json:"image_path"`  // MinIO对象路径
+	AlgoConfig map[string]interface{} `json:"algo_config"` // 算法配置（可选）
 }
 
 // InferenceResponse 推理响应

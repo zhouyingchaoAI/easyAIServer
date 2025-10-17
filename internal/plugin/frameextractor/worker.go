@@ -323,4 +323,17 @@ func truncate(s string, n int) string {
     return s[:n]
 }
 
+// buildSingleFrameArgs 构建抽取单帧的ffmpeg参数
+func buildSingleFrameArgs(rtspURL string) []string {
+    return []string{
+        "-y", "-hide_banner", "-loglevel", "error",
+        "-rtsp_transport", "tcp",
+        "-stimeout", "5000000",
+        "-i", rtspURL,
+        "-frames:v", "1",
+        "-f", "mjpeg",
+        "pipe:1",
+    }
+}
+
 

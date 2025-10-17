@@ -1,17 +1,22 @@
 package frameextractor
 
 import (
+    "bytes"
     "context"
     "errors"
     "easydarwin/internal/conf"
     "easydarwin/utils/pkg/system"
     "fmt"
+    "io"
     "log/slog"
     "os"
+    "os/exec"
     "path/filepath"
     "strings"
     "sync"
     "time"
+    
+    "github.com/minio/minio-go/v7"
 )
 
 type Service struct {
@@ -138,44 +143,50 @@ func (s *Service) startTask(t conf.FrameExtractTask) error {
 
 // AddTask adds or replaces a task at runtime
 func (s *Service) AddTask(t conf.FrameExtractTask) error {
-    if strings.TrimSpace(t.ID) == "" || strings.TrimSpace(t.RtspURL) == "" {
-        return errors.New("invalid task")
-    }
-    // stop existing
-    s.RemoveTask(t.ID)
-    
-    // default to enabled
-    t.Enabled = true
-    
-    // ensure output_path defaults to task ID if empty
-    if strings.TrimSpace(t.OutputPath) == "" {
-        t.OutputPath = t.ID
-    }
-    
-    // ensure task_type has a value (default to first type or "未分类")
-    if strings.TrimSpace(t.TaskType) == "" {
-        if len(s.cfg.TaskTypes) > 0 {
-            t.TaskType = s.cfg.TaskTypes[0]
-        } else {
-            t.TaskType = "未分类"
-        }
-    }
-    
-    // record into cfg
-    s.cfg.Tasks = append(s.cfg.Tasks, t)
-    
-    // create minio path if store is minio
-    if s.cfg.Store == "minio" && s.minio != nil {
-        if err := s.createMinioPath(t); err != nil {
-            s.log.Warn("failed to create minio path", slog.String("task", t.ID), slog.String("err", err.Error()))
-        }
-    }
-    
-    // persist to config file
-    if err := s.saveConfigToFile(s.configPath); err != nil {
-        s.log.Warn("failed to persist config", slog.String("err", err.Error()))
-    }
-    return s.startTask(t)
+	if strings.TrimSpace(t.ID) == "" || strings.TrimSpace(t.RtspURL) == "" {
+		return errors.New("invalid task")
+	}
+	// stop existing
+	s.RemoveTask(t.ID)
+	
+	// 初始状态设置为unconfigured，不启动
+	t.Enabled = false
+	t.ConfigStatus = "unconfigured"
+	t.PreviewImage = ""
+	
+	// ensure output_path defaults to task ID if empty
+	if strings.TrimSpace(t.OutputPath) == "" {
+		t.OutputPath = t.ID
+	}
+	
+	// ensure task_type has a value (default to first type or "未分类")
+	if strings.TrimSpace(t.TaskType) == "" {
+		if len(s.cfg.TaskTypes) > 0 {
+			t.TaskType = s.cfg.TaskTypes[0]
+		} else {
+			t.TaskType = "未分类"
+		}
+	}
+	
+	// record into cfg
+	s.cfg.Tasks = append(s.cfg.Tasks, t)
+	
+	// create minio path if store is minio
+	if s.cfg.Store == "minio" && s.minio != nil {
+		if err := s.createMinioPath(t); err != nil {
+			s.log.Warn("failed to create minio path", slog.String("task", t.ID), slog.String("err", err.Error()))
+		}
+	}
+	
+	// persist to config file
+	if err := s.saveConfigToFile(s.configPath); err != nil {
+		s.log.Warn("failed to persist config", slog.String("err", err.Error()))
+	}
+	
+	// 抽取单张预览图（异步）
+	go s.extractSinglePreviewFrame(t)
+	
+	return nil
 }
 
 // RemoveTask stops and removes a task by id
@@ -382,6 +393,242 @@ func (s *Service) GetTaskStatus(id string) bool {
     defer s.mu.Unlock()
     _, ok := s.taskStops[id]
     return ok
+}
+
+// extractSinglePreviewFrame 抽取单张预览图
+func (s *Service) extractSinglePreviewFrame(task conf.FrameExtractTask) {
+	s.log.Info("extracting preview frame", slog.String("task", task.ID))
+	
+	// 使用ffmpeg抽取一帧
+	args := buildSingleFrameArgs(task.RtspURL)
+	ff := getFFmpegPath()
+	cmd := exec.Command(ff, args...)
+	
+	var frameBuffer bytes.Buffer
+	cmd.Stdout = &frameBuffer
+	
+	if err := cmd.Run(); err != nil {
+		s.log.Error("failed to extract preview frame", 
+			slog.String("task", task.ID), 
+			slog.String("err", err.Error()))
+		return
+	}
+	
+	// 生成预览图文件名
+	timestamp := time.Now().Format("20060102-150405.000")
+	filename := fmt.Sprintf("preview_%s.jpg", timestamp)
+	
+	// 保存到MinIO或本地
+	var imagePath string
+	if s.cfg.Store == "minio" && s.minio != nil {
+		// 保存到MinIO
+		taskType := task.TaskType
+		if taskType == "" {
+			taskType = "未分类"
+		}
+		key := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.OutputPath, filename))
+		
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		
+		_, err := s.minio.client.PutObject(ctx, s.minio.bucket, key, 
+			bytes.NewReader(frameBuffer.Bytes()), 
+			int64(frameBuffer.Len()), 
+			minio.PutObjectOptions{ContentType: "image/jpeg"})
+		
+		if err != nil {
+			s.log.Error("failed to upload preview to minio", 
+				slog.String("task", task.ID), 
+				slog.String("err", err.Error()))
+			return
+		}
+		imagePath = key
+		s.log.Info("preview frame uploaded to minio", 
+			slog.String("task", task.ID), 
+			slog.String("path", key))
+	} else {
+		// 保存到本地
+		localDir := filepath.Join(s.cfg.OutputDir, task.OutputPath)
+		if err := os.MkdirAll(localDir, 0o755); err != nil {
+			s.log.Error("failed to create local dir", 
+				slog.String("task", task.ID), 
+				slog.String("err", err.Error()))
+			return
+		}
+		localPath := filepath.Join(localDir, filename)
+		if err := os.WriteFile(localPath, frameBuffer.Bytes(), 0o644); err != nil {
+			s.log.Error("failed to save preview locally", 
+				slog.String("task", task.ID), 
+				slog.String("err", err.Error()))
+			return
+		}
+		imagePath = localPath
+		s.log.Info("preview frame saved locally", 
+			slog.String("task", task.ID), 
+			slog.String("path", localPath))
+	}
+	
+	// 更新任务配置
+	s.mu.Lock()
+	for i := range s.cfg.Tasks {
+		if s.cfg.Tasks[i].ID == task.ID {
+			s.cfg.Tasks[i].PreviewImage = imagePath
+			break
+		}
+	}
+	s.mu.Unlock()
+	
+	// 持久化
+	if err := s.saveConfigToFile(s.configPath); err != nil {
+		s.log.Warn("failed to persist config after preview", 
+			slog.String("err", err.Error()))
+	}
+}
+
+// SaveAlgorithmConfig 保存算法配置到MinIO
+func (s *Service) SaveAlgorithmConfig(taskID string, config []byte) error {
+	if s.minio == nil {
+		return fmt.Errorf("minio not initialized")
+	}
+	
+	// 查找任务
+	s.mu.Lock()
+	var task *conf.FrameExtractTask
+	for i := range s.cfg.Tasks {
+		if s.cfg.Tasks[i].ID == taskID {
+			task = &s.cfg.Tasks[i]
+			break
+		}
+	}
+	s.mu.Unlock()
+	
+	if task == nil {
+		return fmt.Errorf("task not found: %s", taskID)
+	}
+	
+	// 保存配置文件到MinIO
+	taskType := task.TaskType
+	if taskType == "" {
+		taskType = "未分类"
+	}
+	configKey := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.OutputPath, "algo_config.json"))
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	
+	_, err := s.minio.client.PutObject(ctx, s.minio.bucket, configKey, 
+		bytes.NewReader(config), 
+		int64(len(config)), 
+		minio.PutObjectOptions{ContentType: "application/json"})
+	
+	if err != nil {
+		return fmt.Errorf("failed to save config to minio: %w", err)
+	}
+	
+	// 更新任务状态为已配置
+	s.mu.Lock()
+	for i := range s.cfg.Tasks {
+		if s.cfg.Tasks[i].ID == taskID {
+			s.cfg.Tasks[i].ConfigStatus = "configured"
+			break
+		}
+	}
+	s.mu.Unlock()
+	
+	// 持久化
+	if err := s.saveConfigToFile(s.configPath); err != nil {
+		s.log.Warn("failed to persist config", slog.String("err", err.Error()))
+	}
+	
+	s.log.Info("algorithm config saved", 
+		slog.String("task", taskID), 
+		slog.String("path", configKey))
+	
+	return nil
+}
+
+// GetAlgorithmConfig 获取算法配置
+func (s *Service) GetAlgorithmConfig(taskID string) ([]byte, error) {
+	if s.minio == nil {
+		return nil, fmt.Errorf("minio not initialized")
+	}
+	
+	// 查找任务
+	s.mu.Lock()
+	var task *conf.FrameExtractTask
+	for i := range s.cfg.Tasks {
+		if s.cfg.Tasks[i].ID == taskID {
+			task = &s.cfg.Tasks[i]
+			break
+		}
+	}
+	s.mu.Unlock()
+	
+	if task == nil {
+		return nil, fmt.Errorf("task not found: %s", taskID)
+	}
+	
+	// 从MinIO读取配置
+	taskType := task.TaskType
+	if taskType == "" {
+		taskType = "未分类"
+	}
+	configKey := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.OutputPath, "algo_config.json"))
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	
+	object, err := s.minio.client.GetObject(ctx, s.minio.bucket, configKey, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get config from minio: %w", err)
+	}
+	defer object.Close()
+	
+	// 读取全部内容
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, object); err != nil {
+		return nil, fmt.Errorf("failed to read config: %w", err)
+	}
+	
+	return buf.Bytes(), nil
+}
+
+// StartWithConfig 配置完成后启动抽帧
+func (s *Service) StartWithConfig(taskID string) error {
+	s.mu.Lock()
+	var task *conf.FrameExtractTask
+	for i := range s.cfg.Tasks {
+		if s.cfg.Tasks[i].ID == taskID {
+			if s.cfg.Tasks[i].ConfigStatus != "configured" {
+				s.mu.Unlock()
+				return fmt.Errorf("task not configured yet")
+			}
+			task = &s.cfg.Tasks[i]
+			break
+		}
+	}
+	s.mu.Unlock()
+	
+	if task == nil {
+		return fmt.Errorf("task not found")
+	}
+	
+	// 启动任务
+	return s.StartTaskByID(taskID)
+}
+
+// GetTasksByType 获取指定类型的任务列表
+func (s *Service) GetTasksByType(taskType string) []conf.FrameExtractTask {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	
+	var result []conf.FrameExtractTask
+	for _, task := range s.cfg.Tasks {
+		if task.TaskType == taskType {
+			result = append(result, task)
+		}
+	}
+	return result
 }
 
 // global accessor for API layer

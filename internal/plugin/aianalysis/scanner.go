@@ -108,6 +108,18 @@ func (s *Scanner) scanNewImages() ([]ImageInfo, error) {
 		if strings.Contains(object.Key, "/.") {
 			continue
 		}
+		
+		// 跳过预览图（preview开头的图片不参与推理）
+		filename := object.Key[strings.LastIndex(object.Key, "/")+1:]
+		if strings.HasPrefix(filename, "preview_") {
+			s.log.Debug("skipping preview image", slog.String("path", object.Key))
+			continue
+		}
+		
+		// 跳过配置文件
+		if strings.HasSuffix(object.Key, "algo_config.json") || strings.HasSuffix(object.Key, ".json") {
+			continue
+		}
 
 		// 检查是否已处理
 		if s.isProcessed(object.Key) {

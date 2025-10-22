@@ -1,0 +1,429 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "EasyDarwin AI算法服务对接API",
+    "description": "算法服务与EasyDarwin系统对接的API规范",
+    "version": "1.0.0",
+    "contact": {
+      "name": "EasyDarwin Team",
+      "url": "https://github.com/EasyDarwin/EasyDarwin"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://10.1.6.230:5066/api/v1",
+      "description": "EasyDarwin主服务"
+    }
+  ],
+  "paths": {
+    "/ai_analysis/register": {
+      "post": {
+        "summary": "注册算法服务",
+        "description": "算法服务启动时调用此接口注册到EasyDarwin",
+        "tags": ["服务管理"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServiceRegistration"
+              },
+              "example": {
+                "service_id": "tripwire_service_001",
+                "name": "绊线人数统计服务",
+                "task_types": ["绊线人数统计", "人数统计"],
+                "endpoint": "http://192.168.1.100:8000/infer",
+                "version": "1.0.0"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "注册成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "service_id": {
+                      "type": "string",
+                      "example": "tripwire_service_001"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ai_analysis/heartbeat/{service_id}": {
+      "post": {
+        "summary": "发送心跳",
+        "description": "每45秒发送一次心跳，保持服务在线状态",
+        "tags": ["服务管理"],
+        "parameters": [
+          {
+            "name": "service_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "tripwire_service_001"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "心跳成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "example": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ai_analysis/unregister/{service_id}": {
+      "delete": {
+        "summary": "注销服务",
+        "description": "算法服务停止时调用此接口注销",
+        "tags": ["服务管理"],
+        "parameters": [
+          {
+            "name": "service_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "注销成功"
+          }
+        }
+      }
+    },
+    "/ai_analysis/services": {
+      "get": {
+        "summary": "查询已注册服务",
+        "description": "查询当前所有已注册的算法服务",
+        "tags": ["服务管理"],
+        "responses": {
+          "200": {
+            "description": "服务列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "services": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AlgorithmService"
+                      }
+                    },
+                    "total": {
+                      "type": "integer",
+                      "example": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ServiceRegistration": {
+        "type": "object",
+        "required": ["service_id", "name", "task_types", "endpoint", "version"],
+        "properties": {
+          "service_id": {
+            "type": "string",
+            "description": "服务唯一标识（建议使用UUID）",
+            "example": "tripwire_service_001"
+          },
+          "name": {
+            "type": "string",
+            "description": "服务名称",
+            "example": "绊线人数统计服务"
+          },
+          "task_types": {
+            "type": "array",
+            "description": "支持的任务类型列表",
+            "items": {
+              "type": "string"
+            },
+            "example": ["绊线人数统计", "人数统计"]
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "推理接口的完整URL",
+            "example": "http://192.168.1.100:8000/infer"
+          },
+          "version": {
+            "type": "string",
+            "description": "服务版本号",
+            "example": "1.0.0"
+          }
+        }
+      },
+      "AlgorithmService": {
+        "type": "object",
+        "properties": {
+          "service_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "task_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "register_at": {
+            "type": "integer",
+            "description": "注册时间戳（毫秒）"
+          },
+          "last_heartbeat": {
+            "type": "integer",
+            "description": "最后心跳时间戳（毫秒）"
+          }
+        }
+      },
+      "InferenceRequest": {
+        "type": "object",
+        "description": "EasyDarwin发送给算法服务的推理请求",
+        "required": ["image_url", "task_id", "task_type", "image_path"],
+        "properties": {
+          "image_url": {
+            "type": "string",
+            "description": "图片MinIO预签名URL（有效期1小时）",
+            "example": "http://10.1.6.230:9000/images/绊线人数统计/公司入口统计/20251020-094708.979.jpg?X-Amz-Algorithm=..."
+          },
+          "task_id": {
+            "type": "string",
+            "description": "任务唯一标识",
+            "example": "公司入口统计"
+          },
+          "task_type": {
+            "type": "string",
+            "description": "任务类型",
+            "example": "绊线人数统计"
+          },
+          "image_path": {
+            "type": "string",
+            "description": "图片在MinIO中的路径",
+            "example": "绊线人数统计/公司入口统计/20251020-094708.979.jpg"
+          },
+          "algo_config": {
+            "type": "object",
+            "description": "算法配置（JSON对象，可选）",
+            "properties": {
+              "regions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Region"
+                }
+              },
+              "algorithm_params": {
+                "$ref": "#/components/schemas/AlgorithmParams"
+              }
+            }
+          },
+          "algo_config_url": {
+            "type": "string",
+            "description": "算法配置文件URL（可选，备用）",
+            "example": "http://10.1.6.230:9000/images/绊线人数统计/公司入口统计/algo_config.json?X-Amz-..."
+          }
+        }
+      },
+      "InferenceResponse": {
+        "type": "object",
+        "description": "算法服务返回的推理响应",
+        "required": ["success", "result", "confidence", "inference_time_ms"],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "推理是否成功",
+            "example": true
+          },
+          "result": {
+            "type": "object",
+            "description": "推理结果（自定义结构）",
+            "nullable": true,
+            "properties": {
+              "total_count": {
+                "type": "integer",
+                "description": "检测数量（必须）",
+                "example": 2
+              },
+              "detections": {
+                "type": "array",
+                "description": "检测到的目标列表",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "confidence": {
+            "type": "number",
+            "format": "float",
+            "description": "平均置信度（0.0-1.0）",
+            "example": 0.915
+          },
+          "inference_time_ms": {
+            "type": "integer",
+            "description": "推理耗时（毫秒）",
+            "example": 85
+          },
+          "error": {
+            "type": "string",
+            "description": "错误信息（仅当success=false时）",
+            "example": "Image download failed"
+          }
+        }
+      },
+      "Region": {
+        "type": "object",
+        "description": "检测区域配置",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "region_1729411234567"
+          },
+          "name": {
+            "type": "string",
+            "example": "入口检测线"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["line", "rectangle", "polygon"],
+            "example": "line"
+          },
+          "enabled": {
+            "type": "boolean",
+            "example": true
+          },
+          "points": {
+            "type": "array",
+            "description": "坐标点数组",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            },
+            "example": [[100, 300], [700, 300]]
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "direction": {
+                "type": "string",
+                "enum": ["in", "out", "in_out"],
+                "description": "检测方向（仅line类型）",
+                "example": "in"
+              },
+              "color": {
+                "type": "string",
+                "example": "#00FF00"
+              },
+              "thickness": {
+                "type": "integer",
+                "example": 3
+              },
+              "opacity": {
+                "type": "number",
+                "description": "透明度（rectangle/polygon类型）",
+                "example": 0.3
+              },
+              "threshold": {
+                "type": "number",
+                "description": "检测阈值（rectangle/polygon类型）",
+                "example": 0.5
+              }
+            }
+          }
+        }
+      },
+      "AlgorithmParams": {
+        "type": "object",
+        "description": "算法参数",
+        "properties": {
+          "confidence_threshold": {
+            "type": "number",
+            "description": "置信度阈值",
+            "example": 0.7
+          },
+          "iou_threshold": {
+            "type": "number",
+            "description": "IOU阈值",
+            "example": 0.5
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "example": "Invalid request"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "服务管理",
+      "description": "算法服务的注册、心跳和注销"
+    }
+  ],
+  "externalDocs": {
+    "description": "完整对接文档",
+    "url": "./ALGORITHM_SERVICE_INTEGRATION_GUIDE.md"
+  }
+}
+
+
+

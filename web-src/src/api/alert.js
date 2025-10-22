@@ -26,6 +26,15 @@ export default {
     });
   },
   
+  // 批量删除告警
+  batchDeleteAlerts(ids){
+    return request({
+      url: '/alerts/batch_delete',
+      method: 'post',
+      data: { ids }
+    });
+  },
+  
   // 获取注册的算法服务
   listServices(){
     return request({

@@ -342,6 +342,16 @@ func registerApp(g gin.IRouter) {
 		}
 		c.JSON(200, gin.H{"ok": true, "message": "task started with config"})
 	})
+	// get monitoring stats
+	fem.GET("/stats", func(c *gin.Context) {
+		fx := frameextractor.GetGlobal()
+		if fx == nil {
+			c.JSON(500, gin.H{"error": "service not ready"})
+			return
+		}
+		stats := fx.GetStats()
+		c.JSON(200, stats)
+	})
 	
 	// MinIO图片代理（用于前端显示预览图）
 	g.GET("/minio/preview/*path", func(c *gin.Context) {

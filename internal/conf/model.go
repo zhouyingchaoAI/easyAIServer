@@ -459,11 +459,12 @@ type AlgorithmService struct {
 
 // InferenceRequest 推理请求
 type InferenceRequest struct {
-	ImageURL   string                 `json:"image_url"`   // MinIO预签名URL
-	TaskID     string                 `json:"task_id"`     // 任务ID
-	TaskType   string                 `json:"task_type"`   // 任务类型
-	ImagePath  string                 `json:"image_path"`  // MinIO对象路径
-	AlgoConfig map[string]interface{} `json:"algo_config"` // 算法配置（可选）
+	ImageURL      string                 `json:"image_url"`       // MinIO预签名URL
+	TaskID        string                 `json:"task_id"`         // 任务ID
+	TaskType      string                 `json:"task_type"`       // 任务类型
+	ImagePath     string                 `json:"image_path"`      // MinIO对象路径
+	AlgoConfig    map[string]interface{} `json:"algo_config"`     // 算法配置（可选）
+	AlgoConfigURL string                 `json:"algo_config_url"` // 算法配置文件URL（可选）
 }
 
 // InferenceResponse 推理响应

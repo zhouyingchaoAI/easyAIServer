@@ -265,6 +265,19 @@ func (q *InferenceQueue) GetDropRate() float64 {
 	return float64(q.droppedCount) / float64(total)
 }
 
+// ResetStats 重置统计数据
+func (q *InferenceQueue) ResetStats() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	
+	q.droppedCount = 0
+	q.processedCount = 0
+	q.lastAlertTime = time.Time{}
+	
+	q.log.Info("inference queue stats reset",
+		slog.Int("remaining_queue_size", len(q.images)))
+}
+
 // deleteImageFromMinIO 删除MinIO中的图片
 func (q *InferenceQueue) deleteImageFromMinIO(img ImageInfo) {
 	if q.minio == nil || q.bucket == "" {

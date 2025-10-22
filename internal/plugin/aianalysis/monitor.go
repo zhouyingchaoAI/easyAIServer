@@ -10,8 +10,10 @@ import (
 type PerformanceMonitor struct {
 	// 统计数据
 	totalInferences    int64
+	failedInferences   int64  // 失败次数
 	totalInferenceTime int64  // 毫秒
 	avgInferenceTime   float64 // 毫秒
+	maxInferenceTime   int64  // 最大推理时间
 	
 	// 速率统计
 	frameRate      float64 // 抽帧速率（张/秒）
@@ -57,12 +59,18 @@ func (m *PerformanceMonitor) RecordInference(inferenceTimeMs int64, success bool
 	defer m.mu.Unlock()
 	
 	if !success {
-		return  // 失败的不计入统计
+		m.failedInferences++
+		return  // 失败的不计入时间统计
 	}
 	
 	m.totalInferences++
 	m.totalInferenceTime += inferenceTimeMs
 	m.avgInferenceTime = float64(m.totalInferenceTime) / float64(m.totalInferences)
+	
+	// 更新最大推理时间
+	if inferenceTimeMs > m.maxInferenceTime {
+		m.maxInferenceTime = inferenceTimeMs
+	}
 	
 	// 更新推理速率（每分钟更新一次）
 	now := time.Now()
@@ -160,12 +168,14 @@ func (m *PerformanceMonitor) GetStats() map[string]interface{} {
 	}
 	
 	return map[string]interface{}{
-		"total_inferences":     m.totalInferences,
+		"total_count":         m.totalInferences,
+		"failed_count":        m.failedInferences,
 		"total_inference_time": m.totalInferenceTime,
-		"avg_inference_ms":     m.avgInferenceTime,
-		"inference_per_sec":    inferPerSec,
-		"slow_count":           m.slowCount,
-		"slow_threshold_ms":    m.slowThresholdMs,
+		"avg_inference_ms":    m.avgInferenceTime,
+		"max_inference_ms":    m.maxInferenceTime,
+		"inference_per_sec":   inferPerSec,
+		"slow_count":          m.slowCount,
+		"slow_threshold_ms":   m.slowThresholdMs,
 	}
 }
 
@@ -175,9 +185,14 @@ func (m *PerformanceMonitor) Reset() {
 	defer m.mu.Unlock()
 	
 	m.totalInferences = 0
+	m.failedInferences = 0
 	m.totalInferenceTime = 0
 	m.avgInferenceTime = 0
+	m.maxInferenceTime = 0
 	m.slowCount = 0
 	m.lastUpdateTime = time.Now()
+	m.lastSlowAlert = time.Time{}
+	
+	m.log.Info("performance monitor stats reset")
 }
 

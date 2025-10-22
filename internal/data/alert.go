@@ -76,6 +76,21 @@ func DeleteAlert(id uint) error {
 	return GetDatabase().Delete(&model.Alert{}, id).Error
 }
 
+// BatchDeleteAlerts 批量删除告警
+func BatchDeleteAlerts(ids []uint) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	
+	// 使用事务批量删除
+	result := GetDatabase().Delete(&model.Alert{}, ids)
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	
+	return int(result.RowsAffected), nil
+}
+
 // GetDistinctTaskIDs 获取所有不重复的任务ID列表
 func GetDistinctTaskIDs() ([]string, error) {
 	var taskIDs []string

@@ -54,6 +54,10 @@ export default {
   // 配置完成后启动
   startWithConfig(taskId){
     return request({ url: `/frame_extractor/tasks/${taskId}/start_with_config`, method: 'post' });
+  },
+  // 获取监控统计
+  getStats(){
+    return request({ url: '/frame_extractor/stats', method: 'get' });
   }
 }
 

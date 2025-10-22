@@ -1,299 +1,181 @@
-# yanying 文档中心
+# EasyDarwin 技术文档索引
 
-欢迎来到yanying视频智能分析平台的文档中心！
+## 📚 文档导航
 
----
+### 🚀 快速开始
 
-## 📚 快速导航
-
-### 🚀 新手入门
-
-| 文档 | 描述 | 适合人群 |
+| 文档 | 说明 | 适用对象 |
 |------|------|---------|
-| [中文README](../README_CN.md) | 项目概览、快速开始 | 所有用户 |
-| [快速开始指南](../QUICKSTART.md) | 5分钟上手教程 | 新手用户 |
-| [项目介绍](PROJECT_INTRO_CN.md) | 深入了解项目愿景和技术创新 | 决策者、架构师 |
-
-### 🤖 智能分析
-
-| 文档 | 描述 | 适合人群 |
-|------|------|---------|
-| [AI分析插件](AI_ANALYSIS.md) | AI分析功能完整文档 | 开发者、集成商 |
-| [任务类型系统](TASK_TYPES.md) | 20+预设任务类型说明 | 算法开发者 |
-| [任务类型示例](TASK_TYPE_EXAMPLES.md) | 各场景配置示例 | 系统集成商 |
-
-### 🎬 抽帧功能
-
-| 文档 | 描述 | 适合人群 |
-|------|------|---------|
-| [抽帧插件文档](FRAME_EXTRACTOR.md) | 抽帧功能完整指南 | 开发者 |
-| [问题排查指南](TROUBLESHOOTING_FRAME_EXTRACTOR.md) | 常见问题解决方案 | 运维人员 |
-
-### 🔧 部署运维
-
-| 文档 | 描述 | 适合人群 |
-|------|------|---------|
-| [部署指南](DEPLOYMENT_GUIDE_CN.md) | 从开发到生产的完整部署方案 | 运维工程师 |
-| [E2E测试指南](E2E_TEST.md) | 端到端测试流程 | 测试人员 |
-
-### 🔗 其他文档
-
-| 文档 | 描述 | 适合人群 |
-|------|------|---------|
-| [直播流地址说明](LIVE_STREAM_URL.md) | 各种协议的流地址格式 | 开发者 |
+| [../README_CN.md](../README_CN.md) | 项目介绍（中文） | 所有用户 |
+| [../README.md](../README.md) | 项目介绍（英文） | 国际用户 |
+| [../QUICK_REFERENCE.md](../QUICK_REFERENCE.md) | 快速参考卡片 | 快速查阅 |
+| [../UPGRADE_GUIDE.md](../UPGRADE_GUIDE.md) | 升级指南 | 版本升级 |
+| [../README_前端修复完成.md](../README_前端修复完成.md) | 最新UI修复说明 | 前端开发 |
 
 ---
 
-## 🎯 按角色查找
+### 📖 核心功能文档
 
-### 👨‍💼 决策者 / 项目经理
+#### AI智能分析
+- [AI_ANALYSIS.md](AI_ANALYSIS.md) - AI分析插件完整文档
+- [AI_ANALYSIS_QUICKSTART.md](AI_ANALYSIS_QUICKSTART.md) - 快速入门
+- [SMART_INFERENCE_STRATEGY.md](SMART_INFERENCE_STRATEGY.md) - 智能推理策略
+- [SMART_INFERENCE_USAGE.md](SMART_INFERENCE_USAGE.md) - 智能推理使用
+- [AI_INFERENCE_AUTO_DELETE.md](AI_INFERENCE_AUTO_DELETE.md) - 自动删除功能
 
-**推荐阅读顺序**：
-1. [项目介绍](PROJECT_INTRO_CN.md) - 了解项目价值
-2. [中文README](../README_CN.md) - 核心功能概览
-3. [部署指南](DEPLOYMENT_GUIDE_CN.md) - 了解部署成本
+#### 抽帧功能
+- [FRAME_EXTRACTOR.md](FRAME_EXTRACTOR.md) - 抽帧插件完整文档
+- [FRAME_EXTRACTOR_MONITOR.md](FRAME_EXTRACTOR_MONITOR.md) - 监控功能
+- [TROUBLESHOOTING_FRAME_EXTRACTOR.md](TROUBLESHOOTING_FRAME_EXTRACTOR.md) - 故障排查
 
-**关注重点**：
-- ✅ 项目能解决什么问题
-- ✅ 技术架构和扩展性
-- ✅ 部署成本和维护成本
-- ✅ 应用场景和案例
-
----
-
-### 👨‍💻 算法开发者
-
-**推荐阅读顺序**：
-1. [任务类型系统](TASK_TYPES.md) - 了解预设场景
-2. [AI分析插件](AI_ANALYSIS.md) - API接口规范
-3. [任务类型示例](TASK_TYPE_EXAMPLES.md) - 参考示例
-
-**关注重点**：
-- ✅ 如何开发算法服务
-- ✅ HTTP推理接口规范
-- ✅ 服务注册与心跳机制
-- ✅ 结果格式要求
-
-**开发示例**：
-```python
-# examples/algorithm_service.py
-python algorithm_service.py \
-  --service-id my_algorithm \
-  --task-types 人数统计 \
-  --port 8000
-```
+#### 算法对接
+- [ALGORITHM_INTEGRATION_GUIDE.md](ALGORITHM_INTEGRATION_GUIDE.md) - 算法集成指南
+- [ALGORITHM_INTEGRATION_README.md](ALGORITHM_INTEGRATION_README.md) - 算法对接说明
+- [ALGORITHM_SERVICE_INTEGRATION_GUIDE.md](ALGORITHM_SERVICE_INTEGRATION_GUIDE.md) - 服务集成
+- [ALGORITHM_RESPONSE_FORMAT.md](ALGORITHM_RESPONSE_FORMAT.md) - 响应格式规范
+- [ALGORITHM_CONFIG_SPEC.md](ALGORITHM_CONFIG_SPEC.md) - 配置规范
 
 ---
 
-### 🏗️ 系统集成商
+### ⚙️ 配置与部署
 
-**推荐阅读顺序**：
-1. [中文README](../README_CN.md) - 功能全览
-2. [快速开始](../QUICKSTART.md) - 快速部署测试
-3. [部署指南](DEPLOYMENT_GUIDE_CN.md) - 生产环境部署
-4. [AI分析插件](AI_ANALYSIS.md) - 集成算法服务
+#### 配置文档
+- [CONFIG_MIGRATION_GUIDE.md](CONFIG_MIGRATION_GUIDE.md) - 配置迁移指南
+- [DEPLOYMENT_GUIDE_CN.md](DEPLOYMENT_GUIDE_CN.md) - 部署指南（中文）
+- [DATABASE_MIGRATION.md](DATABASE_MIGRATION.md) - 数据库迁移
 
-**关注重点**：
-- ✅ 如何为客户快速搭建系统
-- ✅ 如何集成现有算法
-- ✅ 如何定制化配置
-- ✅ 性能优化和监控
+#### 任务配置
+- [TASK_TYPES.md](TASK_TYPES.md) - 任务类型说明
+- [TASK_TYPE_EXAMPLES.md](TASK_TYPE_EXAMPLES.md) - 任务类型示例
+- [LIVE_STREAM_URL.md](LIVE_STREAM_URL.md) - 直播流配置
 
 ---
 
-### 🔧 运维工程师
+### 🔧 功能详解
 
-**推荐阅读顺序**：
-1. [部署指南](DEPLOYMENT_GUIDE_CN.md) - 部署方案
-2. [问题排查](TROUBLESHOOTING_FRAME_EXTRACTOR.md) - 常见问题
-3. [E2E测试](E2E_TEST.md) - 测试验证
+#### 核心功能
+- [FEATURE_SAVE_ONLY_WITH_DETECTION.md](FEATURE_SAVE_ONLY_WITH_DETECTION.md) - 只保存有检测结果
+- [FEATURE_UPDATE_DETECTION_COUNT.md](FEATURE_UPDATE_DETECTION_COUNT.md) - 检测计数更新
+- [FEATURE_QUEUE_DROP_OPTIMIZATION.md](FEATURE_QUEUE_DROP_OPTIMIZATION.md) - 队列丢弃优化
+- [FEATURE_TASK_ID_DROPDOWN.md](FEATURE_TASK_ID_DROPDOWN.md) - 任务ID下拉
 
-**关注重点**：
-- ✅ 系统要求和资源规划
-- ✅ 高可用部署架构
-- ✅ 监控告警配置
-- ✅ 备份恢复方案
-- ✅ 性能优化
+#### UI功能
+- [PREVIEW_IMAGE_POLICY.md](PREVIEW_IMAGE_POLICY.md) - 预览图策略
+- [CANVAS_LOADING_FIX.md](CANVAS_LOADING_FIX.md) - Canvas加载修复
 
-**运维工具**：
-```bash
-# 查看服务状态
-systemctl status yanying
-
-# 查看日志
-journalctl -u yanying -f
-
-# 健康检查
-curl http://localhost:10086/api/v1/health
-```
+#### 特殊功能
+- [LINE_DIRECTION_FEATURE.md](LINE_DIRECTION_FEATURE.md) - 线条方向功能
+- [LINE_DIRECTION_PERPENDICULAR_ARROWS.md](LINE_DIRECTION_PERPENDICULAR_ARROWS.md) - 垂直箭头
+- [TRIPWIRE_COUNTING_ALGORITHM.md](TRIPWIRE_COUNTING_ALGORITHM.md) - 绊线统计算法
+- [MONITOR_RESET_FEATURE.md](MONITOR_RESET_FEATURE.md) - 监控重置功能
+- [INFERENCE_CONFIG_URL_FEATURE.md](INFERENCE_CONFIG_URL_FEATURE.md) - 推理配置URL
+- [INFERENCE_QUEUE_MONITOR.md](INFERENCE_QUEUE_MONITOR.md) - 推理队列监控
 
 ---
 
-### 🧪 测试人员
+### 🔬 技术详解
 
-**推荐阅读顺序**：
-1. [E2E测试指南](E2E_TEST.md) - 完整测试流程
-2. [问题排查](TROUBLESHOOTING_FRAME_EXTRACTOR.md) - 问题诊断
-
-**关注重点**：
-- ✅ 功能测试用例
-- ✅ 性能测试指标
-- ✅ 异常场景测试
-- ✅ 日志分析
+- [OPTIMIZATION_STRATEGY.md](OPTIMIZATION_STRATEGY.md) - 优化策略
+- [TOTAL_COUNT_PARAMETER.md](TOTAL_COUNT_PARAMETER.md) - total_count参数说明
+- [PROJECT_INTRO_CN.md](PROJECT_INTRO_CN.md) - 项目技术介绍
 
 ---
 
-## 🎓 学习路径
+### 🧪 测试文档
 
-### 入门级（第1周）
-
-**目标**：能够运行起来，理解基本概念
-
-**学习计划**：
-1. **Day 1-2**：阅读[中文README](../README_CN.md)，了解项目整体架构
-2. **Day 3-4**：跟随[快速开始](../QUICKSTART.md)完成本地部署
-3. **Day 5-6**：创建第一个抽帧任务，查看[抽帧文档](FRAME_EXTRACTOR.md)
-4. **Day 7**：运行示例算法服务，查看[AI分析文档](AI_ANALYSIS.md)
-
-**实践项目**：
-- ✅ 本地部署yanying
-- ✅ 添加1个RTSP摄像头
-- ✅ 创建1个抽帧任务
-- ✅ 运行1个示例算法服务
-- ✅ 查看告警结果
+- [E2E_TEST.md](E2E_TEST.md) - 端到端测试
 
 ---
 
-### 进阶级（第2-3周）
+### 📡 API文档
 
-**目标**：能够开发算法服务，配置复杂场景
-
-**学习计划**：
-1. **Week 2**：
-   - 深入学习[任务类型系统](TASK_TYPES.md)
-   - 开发自己的算法服务（参考[AI分析文档](AI_ANALYSIS.md)）
-   - 配置MinIO和Kafka
-2. **Week 3**：
-   - 学习多算法协同工作
-   - 配置复杂的业务场景
-   - 性能调优
-
-**实践项目**：
-- ✅ 开发3个不同场景的算法服务
-- ✅ 配置5路以上摄像头
-- ✅ 实现多算法协同分析
-- ✅ 配置Kafka消息推送
+- [EasyDarwin.api.html](EasyDarwin.api.html) - API文档（HTML）
+- [EasyDarwin.apifox.json](EasyDarwin.apifox.json) - Apifox接口定义
 
 ---
 
-### 高级级（第4周+）
+## 🗂️ 归档文档
 
-**目标**：生产环境部署，性能优化，故障排查
+历史开发过程文档已移至：`docs_archive/`
 
-**学习计划**：
-1. 深入学习[部署指南](DEPLOYMENT_GUIDE_CN.md)
-2. 掌握高可用架构设计
-3. 性能测试与优化
-4. 监控告警配置
-5. 故障排查与恢复
-
-**实践项目**：
-- ✅ 搭建生产环境（多节点）
-- ✅ 配置Nginx负载均衡
-- ✅ 搭建MinIO和Kafka集群
-- ✅ 配置Prometheus监控
-- ✅ 压力测试（100路+摄像头）
+包含：
+- 开发过程总结文档
+- 临时快速指南
+- 重复的说明文档
+- 历史版本文档
 
 ---
 
-## 📖 文档贡献
+## 📖 推荐阅读顺序
 
-### 发现文档问题？
+### 新用户
+1. [../README_CN.md](../README_CN.md) - 了解项目
+2. [AI_ANALYSIS_QUICKSTART.md](AI_ANALYSIS_QUICKSTART.md) - 快速开始
+3. [../QUICK_REFERENCE.md](../QUICK_REFERENCE.md) - 快速参考
 
-- 📝 [提交Issue](https://github.com/EasyDarwin/EasyDarwin/issues)
-- ✏️ 提交Pull Request改进文档
-- 💬 在社区讨论
+### 开发者
+1. [ALGORITHM_INTEGRATION_GUIDE.md](ALGORITHM_INTEGRATION_GUIDE.md) - 算法对接
+2. [ALGORITHM_RESPONSE_FORMAT.md](ALGORITHM_RESPONSE_FORMAT.md) - 响应格式
+3. [ALGORITHM_CONFIG_SPEC.md](ALGORITHM_CONFIG_SPEC.md) - 配置规范
 
-### 文档编写规范
+### 运维人员
+1. [DEPLOYMENT_GUIDE_CN.md](DEPLOYMENT_GUIDE_CN.md) - 部署指南
+2. [CONFIG_MIGRATION_GUIDE.md](CONFIG_MIGRATION_GUIDE.md) - 配置迁移
+3. [TROUBLESHOOTING_FRAME_EXTRACTOR.md](TROUBLESHOOTING_FRAME_EXTRACTOR.md) - 故障排查
 
-1. **使用中文**：所有中文文档使用简体中文
-2. **格式统一**：使用Markdown格式，遵循统一的排版风格
-3. **代码示例**：提供可运行的完整代码示例
-4. **图文并茂**：适当使用图表、流程图增强可读性
-5. **保持更新**：代码更新时同步更新文档
-
----
-
-## 🔍 文档搜索技巧
-
-### 按关键词查找
-
-| 关键词 | 相关文档 |
-|--------|---------|
-| 安装、部署 | [部署指南](DEPLOYMENT_GUIDE_CN.md) |
-| 算法、AI | [AI分析](AI_ANALYSIS.md)、[任务类型](TASK_TYPES.md) |
-| 抽帧、图片 | [抽帧插件](FRAME_EXTRACTOR.md) |
-| 错误、问题 | [问题排查](TROUBLESHOOTING_FRAME_EXTRACTOR.md) |
-| RTSP、流 | [直播流地址](LIVE_STREAM_URL.md) |
-
-### 使用GitHub搜索
-
-在项目页面按 `s` 键，然后输入关键词搜索所有文档。
+### 版本升级
+1. [../UPGRADE_GUIDE.md](../UPGRADE_GUIDE.md) - 升级指南
+2. [CONFIG_MIGRATION_GUIDE.md](CONFIG_MIGRATION_GUIDE.md) - 配置迁移
+3. [DATABASE_MIGRATION.md](DATABASE_MIGRATION.md) - 数据库迁移
 
 ---
 
-## 📞 获取帮助
+## 🔍 文档搜索
 
-### 在线资源
+### 按主题查找
 
-- 📚 **文档中心**：你正在这里
-- 💻 **示例代码**：`examples/` 目录
-- 🐛 **Issue跟踪**：[GitHub Issues](https://github.com/EasyDarwin/EasyDarwin/issues)
-- 💬 **社区讨论**：[GitHub Discussions](https://github.com/EasyDarwin/EasyDarwin/discussions)
-
-### 常见问题快速解答
-
-**Q: 从哪里开始？**
-A: 先看[中文README](../README_CN.md)，然后跟随[快速开始](../QUICKSTART.md)
-
-**Q: 如何开发算法服务？**
-A: 查看[AI分析文档](AI_ANALYSIS.md)的API接口部分
-
-**Q: 遇到错误怎么办？**
-A: 先查看[问题排查指南](TROUBLESHOOTING_FRAME_EXTRACTOR.md)
-
-**Q: 如何部署到生产环境？**
-A: 参考[部署指南](DEPLOYMENT_GUIDE_CN.md)的生产环境部分
-
-**Q: 性能不够怎么办？**
-A: 查看[部署指南](DEPLOYMENT_GUIDE_CN.md)的性能优化部分
+| 主题 | 相关文档 |
+|------|---------|
+| **AI分析** | AI_ANALYSIS*.md, SMART_INFERENCE*.md |
+| **算法对接** | ALGORITHM_*.md |
+| **抽帧功能** | FRAME_EXTRACTOR*.md |
+| **配置管理** | CONFIG_*.md |
+| **功能特性** | FEATURE_*.md |
+| **任务管理** | TASK_*.md |
+| **线条检测** | LINE_DIRECTION*.md, TRIPWIRE*.md |
 
 ---
 
-## 📅 文档更新日志
+## 📝 文档维护
 
-### 2024-10-16
-- ✅ 新增完整的中文README
-- ✅ 新增项目介绍文档
-- ✅ 新增部署指南
-- ✅ 新增文档中心导航
+### 文档更新规范
 
-### 2024-10-15
-- ✅ 新增E2E测试指南
-- ✅ 更新AI分析文档
+1. **核心文档**：放在 doc/ 目录
+2. **用户文档**：放在根目录（README*, QUICK_*, UPGRADE_*）
+3. **过程文档**：开发完成后归档到 docs_archive/
+4. **临时文档**：完成后及时清理
 
-### 历史更新
-- 查看Git提交历史了解更多更新
+### 文档命名规范
+
+- `README*.md` - 主要说明文档
+- `QUICK_*.md` - 快速参考指南
+- `GUIDE*.md` - 详细指南
+- `FEATURE_*.md` - 功能详解
+- `CONFIG_*.md` - 配置相关
 
 ---
 
-<div align="center">
+## 🎯 文档状态
 
-**📖 持续完善中，感谢您的支持！**
+| 类别 | 数量 | 位置 |
+|------|------|------|
+| 用户文档 | 6 | 根目录 |
+| 技术文档 | 36 | doc/ |
+| 归档文档 | 40+ | docs_archive/ |
+| **总计** | **82** | - |
 
-如有疑问或建议，欢迎[提交Issue](https://github.com/EasyDarwin/EasyDarwin/issues)
+---
 
-[⬆ 返回顶部](#yanying-文档中心)
-
-</div>
-
+**最后更新**：2025-10-22  
+**维护人员**：开发团队  
+**文档版本**：v2.1

@@ -12,6 +12,7 @@ import (
     "os"
     "os/exec"
     "path/filepath"
+    "runtime"
     "strings"
     "sync"
     "time"
@@ -29,6 +30,43 @@ type Service struct {
     minio      *minioClient // minio client if store=minio
     // per-task stop channel
     taskStops map[string]chan struct{}
+    // monitoring stats
+    stats      TaskStats
+    statsMu    sync.RWMutex
+}
+
+// TaskStats 任务统计信息
+type TaskStats struct {
+    TotalTasks      int                `json:"total_tasks"`       // 总任务数
+    RunningTasks    int                `json:"running_tasks"`     // 运行中的任务数
+    StoppedTasks    int                `json:"stopped_tasks"`     // 已停止的任务数
+    ConfiguredTasks int                `json:"configured_tasks"`  // 已配置的任务数
+    PendingTasks    int                `json:"pending_tasks"`     // 待配置的任务数
+    TaskDetails     []TaskMonitorInfo  `json:"task_details"`      // 各任务详情
+    SystemInfo      SystemMonitorInfo  `json:"system_info"`       // 系统信息
+    UpdatedAt       time.Time          `json:"updated_at"`        // 更新时间
+}
+
+// TaskMonitorInfo 单个任务监控信息
+type TaskMonitorInfo struct {
+    ID              string    `json:"id"`                // 任务ID
+    TaskType        string    `json:"task_type"`         // 任务类型
+    Status          string    `json:"status"`            // 状态: running/stopped
+    ConfigStatus    string    `json:"config_status"`     // 配置状态
+    IntervalMs      int       `json:"interval_ms"`       // 抽帧间隔
+    OutputPath      string    `json:"output_path"`       // 输出路径
+    LastFrameTime   time.Time `json:"last_frame_time"`   // 最后抽帧时间
+    FrameCount      int64     `json:"frame_count"`       // 已抽取的帧数
+    ErrorCount      int64     `json:"error_count"`       // 错误计数
+    Uptime          int64     `json:"uptime"`            // 运行时长(秒)
+    StartTime       time.Time `json:"start_time"`        // 启动时间
+}
+
+// SystemMonitorInfo 系统监控信息
+type SystemMonitorInfo struct {
+    Goroutines      int       `json:"goroutines"`        // Goroutine数量
+    MemoryUsageMB   float64   `json:"memory_usage_mb"`   // 内存使用(MB)
+    CPUCores        int       `json:"cpu_cores"`         // CPU核心数
 }
 
 func New(cfg *conf.FrameExtractorConfig) *Service {
@@ -51,6 +89,16 @@ func (s *Service) Start() error {
     }
     if !s.cfg.Enable {
         return nil
+    }
+
+    // 🔧 自动迁移旧配置，补全缺失字段（向后兼容）
+    MigrateConfig(s.cfg, s.log)
+    
+    // 验证配置
+    if warnings := ValidateConfig(s.cfg); len(warnings) > 0 {
+        for _, w := range warnings {
+            s.log.Warn("config validation warning", slog.String("warning", w))
+        }
     }
 
     // prepare output dir when using local store
@@ -593,6 +641,37 @@ func (s *Service) GetAlgorithmConfig(taskID string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// GetAlgorithmConfigPath 获取算法配置文件在MinIO中的路径
+func (s *Service) GetAlgorithmConfigPath(taskID string) string {
+	if s.minio == nil {
+		return ""
+	}
+	
+	// 查找任务
+	s.mu.Lock()
+	var task *conf.FrameExtractTask
+	for i := range s.cfg.Tasks {
+		if s.cfg.Tasks[i].ID == taskID {
+			task = &s.cfg.Tasks[i]
+			break
+		}
+	}
+	s.mu.Unlock()
+	
+	if task == nil {
+		return ""
+	}
+	
+	// 构建配置文件路径
+	taskType := task.TaskType
+	if taskType == "" {
+		taskType = "未分类"
+	}
+	configKey := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.OutputPath, "algo_config.json"))
+	
+	return configKey
+}
+
 // StartWithConfig 配置完成后启动抽帧
 func (s *Service) StartWithConfig(taskID string) error {
 	s.mu.Lock()
@@ -646,6 +725,84 @@ func (s *Service) GetPresignedURL(objectPath string, expiry time.Duration) (stri
 	}
 	
 	return presignedURL.String(), nil
+}
+
+// GetStats 获取监控统计信息
+func (s *Service) GetStats() TaskStats {
+    s.mu.Lock()
+    s.statsMu.Lock()
+    defer s.statsMu.Unlock()
+    defer s.mu.Unlock()
+    
+    // 计算统计数据
+    totalTasks := len(s.cfg.Tasks)
+    runningTasks := len(s.taskStops)
+    stoppedTasks := totalTasks - runningTasks
+    configuredTasks := 0
+    pendingTasks := 0
+    
+    taskDetails := make([]TaskMonitorInfo, 0, totalTasks)
+    
+    for _, task := range s.cfg.Tasks {
+        isRunning := false
+        if _, ok := s.taskStops[task.ID]; ok {
+            isRunning = true
+        }
+        
+        status := "stopped"
+        if isRunning {
+            status = "running"
+        }
+        
+        if task.ConfigStatus == "configured" {
+            configuredTasks++
+        } else {
+            pendingTasks++
+        }
+        
+        info := TaskMonitorInfo{
+            ID:           task.ID,
+            TaskType:     task.TaskType,
+            Status:       status,
+            ConfigStatus: task.ConfigStatus,
+            IntervalMs:   getIntervalMs(task, s.cfg),
+            OutputPath:   task.OutputPath,
+            // 以下字段需要从运行时数据获取，暂时使用默认值
+            LastFrameTime: time.Time{},
+            FrameCount:    0,
+            ErrorCount:    0,
+            Uptime:        0,
+            StartTime:     time.Time{},
+        }
+        
+        taskDetails = append(taskDetails, info)
+    }
+    
+    // 获取系统信息
+    var memStats runtime.MemStats
+    runtime.ReadMemStats(&memStats)
+    
+    systemInfo := SystemMonitorInfo{
+        Goroutines:    runtime.NumGoroutine(),
+        MemoryUsageMB: float64(memStats.Alloc) / 1024 / 1024,
+        CPUCores:      runtime.NumCPU(),
+    }
+    
+    stats := TaskStats{
+        TotalTasks:      totalTasks,
+        RunningTasks:    runningTasks,
+        StoppedTasks:    stoppedTasks,
+        ConfiguredTasks: configuredTasks,
+        PendingTasks:    pendingTasks,
+        TaskDetails:     taskDetails,
+        SystemInfo:      systemInfo,
+        UpdatedAt:       time.Now(),
+    }
+    
+    // 缓存统计数据
+    s.stats = stats
+    
+    return stats
 }
 
 // global accessor for API layer

@@ -194,7 +194,7 @@ enable = true
 interval_ms = 1000
 output_dir = './snapshots'
 store = 'minio'
-task_types = ['人数统计', '人员跌倒', '人员离岗', '吸烟检测', '区域入侵', '徘徊检测', '物品遗留', '安全帽检测']
+task_types = ['人数统计', '绊线人数统计', '人员跌倒', '人员离岗', '吸烟检测', '区域入侵', '徘徊检测', '物品遗留', '安全帽检测']
 
 [frame_extractor.minio]
 endpoint = '10.1.6.230:9000'
@@ -227,5 +227,5 @@ mq_type = 'kafka'  # 消息队列类型：kafka|rabbitmq
 mq_address = ''  # 消息队列地址
 mq_topic = 'easydarwin.alerts'  # 告警推送topic
 heartbeat_timeout_sec = 90  # 算法服务心跳超时（秒）
-max_concurrent_infer = 20  # 最大并发推理任务数
+max_concurrent_infer = 100  # 最大并发推理任务数
 save_only_with_detection = true  # 只保存有检测结果的告警，无检测结果的图片将被删除

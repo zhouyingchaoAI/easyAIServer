@@ -78,6 +78,16 @@ const RootRoute = {
       },
     },
     {
+      path: '/frame-extractor/monitor',
+      name: 'FrameMonitor',
+      component: () => import('@/views/frame-extractor/monitor.vue'),
+      meta: {
+        title: '抽帧监控',
+        icon: 'mdi:monitor-dashboard',
+        namePath: ['FrameMonitor'],
+      },
+    },
+    {
       path: '/alerts',
       name: 'Alerts',
       component: () => import('@/views/alerts/index.vue'),

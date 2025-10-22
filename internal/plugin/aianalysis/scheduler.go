@@ -105,6 +105,7 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 
 	// 读取算法配置（如果存在）
 	var algoConfig map[string]interface{}
+	var algoConfigURL string
 	if fxService := s.getFrameExtractorService(); fxService != nil {
 		if configBytes, err := fxService.GetAlgorithmConfig(image.TaskID); err == nil {
 			if err := json.Unmarshal(configBytes, &algoConfig); err != nil {
@@ -112,18 +113,43 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 					slog.String("task_id", image.TaskID),
 					slog.String("err", err.Error()))
 			}
+			
+			// 生成配置文件的预签名URL
+			configPath := fxService.GetAlgorithmConfigPath(image.TaskID)
+			if configPath != "" {
+				configURLCtx, configURLCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer configURLCancel()
+				
+				presignedConfigURL, err := s.minio.PresignedGetObject(configURLCtx, s.bucket, configPath, 1*time.Hour, nil)
+				if err == nil {
+					algoConfigURL = presignedConfigURL.String()
+				} else {
+					s.log.Warn("failed to generate config presigned URL",
+						slog.String("config_path", configPath),
+						slog.String("err", err.Error()))
+				}
+			}
 		}
 	}
 
 	// 构建推理请求
 	req := conf.InferenceRequest{
-		ImageURL:   presignedURL.String(),
-		TaskID:     image.TaskID,
-		TaskType:   image.TaskType,
-		ImagePath:  image.Path,
-		AlgoConfig: algoConfig,
+		ImageURL:      presignedURL.String(),
+		TaskID:        image.TaskID,
+		TaskType:      image.TaskType,
+		ImagePath:     image.Path,
+		AlgoConfig:    algoConfig,
+		AlgoConfigURL: algoConfigURL,
 	}
 
+	// 记录推理请求详情
+	s.log.Info("收到推理请求",
+		slog.String("任务ID", image.TaskID),
+		slog.String("任务类型", image.TaskType),
+		slog.String("图片路径", image.Path),
+		slog.String("图片URL", presignedURL.String()),
+		slog.String("配置文件URL", algoConfigURL))
+	
 	// 记录推理开始时间
 	inferStartTime := time.Now()
 	
@@ -279,7 +305,31 @@ func extractDetectionCount(result interface{}) int {
 		return 0
 	}
 	
-	// 优先从 total_count 字段获取（最高优先级）
+	// 特殊处理：绊线统计算法 - 优先从 line_crossing 获取穿越统计数
+	if lineCrossing, ok := resultMap["line_crossing"]; ok {
+		if lineCrossingMap, ok := lineCrossing.(map[string]interface{}); ok {
+			// 遍历所有区域，累加穿越统计数
+			totalCrossingCount := 0
+			for _, regionData := range lineCrossingMap {
+				if regionMap, ok := regionData.(map[string]interface{}); ok {
+					if count, ok := regionMap["count"]; ok {
+						switch v := count.(type) {
+						case int:
+							totalCrossingCount += v
+						case float64:
+							totalCrossingCount += int(v)
+						}
+					}
+				}
+			}
+			// 如果有穿越统计数，优先返回（这才是绊线算法的核心数据）
+			if totalCrossingCount > 0 {
+				return totalCrossingCount
+			}
+		}
+	}
+	
+	// 优先从 total_count 字段获取
 	if totalCount, ok := resultMap["total_count"]; ok {
 		switch v := totalCount.(type) {
 		case int:

@@ -266,6 +266,64 @@ func (s *Service) GetRegistry() *AlgorithmRegistry {
 	return s.registry
 }
 
+// InferenceStats 推理统计信息
+type InferenceStats struct {
+	QueueSize       int     `json:"queue_size"`        // 当前队列大小
+	QueueMaxSize    int     `json:"queue_max_size"`    // 队列最大容量
+	QueueUtilization float64 `json:"queue_utilization"` // 队列使用率
+	DroppedTotal    int64   `json:"dropped_total"`     // 累计丢弃数
+	ProcessedTotal  int64   `json:"processed_total"`   // 累计处理数
+	DropRate        float64 `json:"drop_rate"`         // 丢弃率
+	Strategy        string  `json:"strategy"`          // 队列策略
+	AvgInferenceMs  float64 `json:"avg_inference_ms"`  // 平均推理时间(ms)
+	MaxInferenceMs  int64   `json:"max_inference_ms"`  // 最大推理时间(ms)
+	TotalInferences int64   `json:"total_inferences"`  // 总推理次数
+	FailedInferences int64  `json:"failed_inferences"` // 失败次数
+	UpdatedAt       string  `json:"updated_at"`        // 更新时间
+}
+
+// GetInferenceStats 获取推理统计信息
+func (s *Service) GetInferenceStats() InferenceStats {
+	if s.queue == nil || s.monitor == nil {
+		return InferenceStats{
+			UpdatedAt: time.Now().Format(time.RFC3339),
+		}
+	}
+	
+	queueStats := s.queue.GetStats()
+	perfStats := s.monitor.GetStats()
+	dropRate := s.queue.GetDropRate()
+	
+	return InferenceStats{
+		QueueSize:        queueStats["queue_size"].(int),
+		QueueMaxSize:     queueStats["max_size"].(int),
+		QueueUtilization: queueStats["utilization"].(float64),
+		DroppedTotal:     queueStats["dropped_total"].(int64),
+		ProcessedTotal:   queueStats["processed_total"].(int64),
+		DropRate:         dropRate,
+		Strategy:         queueStats["strategy"].(string),
+		AvgInferenceMs:   perfStats["avg_inference_ms"].(float64),
+		MaxInferenceMs:   perfStats["max_inference_ms"].(int64),
+		TotalInferences:  perfStats["total_count"].(int64),
+		FailedInferences: perfStats["failed_count"].(int64),
+		UpdatedAt:        time.Now().Format(time.RFC3339),
+	}
+}
+
+// ResetInferenceStats 重置推理统计数据
+func (s *Service) ResetInferenceStats() error {
+	if s.queue == nil || s.monitor == nil {
+		return fmt.Errorf("inference service not initialized")
+	}
+	
+	s.queue.ResetStats()
+	s.monitor.Reset()
+	
+	s.log.Info("inference statistics reset by user request")
+	
+	return nil
+}
+
 // initMinIO 初始化MinIO客户端
 func (s *Service) initMinIO() (*minio.Client, error) {
 	cfg := s.fxCfg.MinIO

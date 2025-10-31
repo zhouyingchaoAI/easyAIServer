@@ -6,6 +6,7 @@ import (
 	"easydarwin/internal/conf"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os/exec"
 	"path/filepath"
 	"time"
@@ -26,23 +27,60 @@ func (s *Service) initMinio() error {
 		return fmt.Errorf("minio endpoint and bucket required")
 	}
 
-	client, err := minio.New(cfg.Endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
-		Secure: cfg.UseSSL,
-	})
-	if err != nil {
-		return err
+	// 配置自定义的 HTTP Transport 以解决 502 错误
+	transport := &http.Transport{
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		DisableCompression:    false,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
 	}
 
-	// check bucket exists, create if not
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	exists, err := client.BucketExists(ctx, cfg.Bucket)
+	client, err := minio.New(cfg.Endpoint, &minio.Options{
+		Creds:     credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
+		Secure:    cfg.UseSSL,
+		Transport: transport,
+		Region:    "",
+	})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create minio client: %w", err)
 	}
+
+	// check bucket exists, create if not (增加重试机制)
+	var exists bool
+	maxRetries := 3
+	retryDelay := 2 * time.Second
+
+	for i := 0; i < maxRetries; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+
+		exists, err = client.BucketExists(ctx, cfg.Bucket)
+		cancel()
+
+		if err == nil {
+			break
+		}
+
+		if i < maxRetries-1 {
+			s.log.Warn("minio bucket check failed, retrying...",
+				slog.Int("attempt", i+1),
+				slog.Int("max_retries", maxRetries),
+				slog.String("error", err.Error()))
+			time.Sleep(retryDelay)
+			retryDelay *= 2 // 指数退避
+		}
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to check minio bucket after %d retries: %w", maxRetries, err)
+	}
+
 	if !exists {
 		s.log.Info("creating minio bucket", slog.String("bucket", cfg.Bucket))
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		
 		if err := client.MakeBucket(ctx, cfg.Bucket, minio.MakeBucketOptions{}); err != nil {
 			return fmt.Errorf("failed to create bucket %s: %w", cfg.Bucket, err)
 		}
@@ -54,6 +92,11 @@ func (s *Service) initMinio() error {
 		bucket: cfg.Bucket,
 		base:   cfg.BasePath,
 	}
+	
+	s.log.Info("minio client initialized",
+		slog.String("endpoint", cfg.Endpoint),
+		slog.String("bucket", cfg.Bucket),
+		slog.Bool("bucket_exists", exists))
 	return nil
 }
 

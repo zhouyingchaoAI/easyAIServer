@@ -17,6 +17,13 @@ type AlgorithmRegistry struct {
 	timeout   time.Duration // heartbeat timeout
 	stopCheck chan struct{}
 	onRegisterCallback func(serviceID string, taskTypes []string) // 注册回调
+	
+	// 负载均衡：记录每个算法实例的调用次数
+	// 使用endpoint作为key，因为同一service_id可能有多个不同的endpoint实例
+	callCounters map[string]int // algorithm endpoint -> call count
+	
+	// Round-Robin索引：每个任务类型的当前选择索引
+	rrIndexes map[string]int // task_type -> round-robin index
 }
 
 // NewRegistry 创建注册中心
@@ -25,10 +32,12 @@ func NewRegistry(timeoutSec int, logger *slog.Logger) *AlgorithmRegistry {
 		timeoutSec = 90
 	}
 	return &AlgorithmRegistry{
-		services:  make(map[string][]conf.AlgorithmService),
-		log:       logger,
-		timeout:   time.Duration(timeoutSec) * time.Second,
-		stopCheck: make(chan struct{}),
+		services:      make(map[string][]conf.AlgorithmService),
+		log:           logger,
+		timeout:       time.Duration(timeoutSec) * time.Second,
+		stopCheck:     make(chan struct{}),
+		callCounters:  make(map[string]int),
+		rrIndexes:     make(map[string]int),
 	}
 }
 
@@ -55,11 +64,16 @@ func (r *AlgorithmRegistry) Register(service conf.AlgorithmService) error {
 
 	// 为每个支持的任务类型注册
 	for _, taskType := range service.TaskTypes {
-		// 移除同ID的旧服务
-		r.removeServiceByIDLocked(service.ServiceID, taskType)
+		// 移除相同endpoint的旧服务（按endpoint去重）
+		removed := r.removeServiceByEndpointLocked(service.Endpoint, taskType)
 		
 		// 添加新服务
 		r.services[taskType] = append(r.services[taskType], service)
+		
+		// 如果移除了旧服务，重置Round-Robin索引以确保公平分配
+		if removed {
+			r.rrIndexes[taskType] = 0
+		}
 	}
 
 	r.log.Info("algorithm service registered",
@@ -97,7 +111,7 @@ func (r *AlgorithmRegistry) Unregister(serviceID string) error {
 	return nil
 }
 
-// Heartbeat 更新心跳时间
+// Heartbeat 更新心跳时间（按ServiceID）
 func (r *AlgorithmRegistry) Heartbeat(serviceID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -118,6 +132,33 @@ func (r *AlgorithmRegistry) Heartbeat(serviceID string) error {
 
 	if !found {
 		return fmt.Errorf("service not found")
+	}
+
+	return nil
+}
+
+// HeartbeatByEndpoint 更新心跳时间（按Endpoint）
+// 用于支持多个相同ServiceID但不同Endpoint的实例
+func (r *AlgorithmRegistry) HeartbeatByEndpoint(endpoint string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	now := time.Now().Unix()
+	found := false
+
+	// 更新所有匹配服务的心跳时间
+	for taskType, services := range r.services {
+		for i := range services {
+			if services[i].Endpoint == endpoint {
+				services[i].LastHeartbeat = now
+				found = true
+			}
+		}
+		r.services[taskType] = services
+	}
+
+	if !found {
+		return fmt.Errorf("service not found by endpoint: %s", endpoint)
 	}
 
 	return nil
@@ -224,5 +265,179 @@ func (r *AlgorithmRegistry) removeServiceByIDLocked(serviceID, taskType string) 
 
 	r.services[taskType] = filtered
 	return found
+}
+
+// removeServiceByEndpointLocked 移除指定endpoint的服务（需要已加锁）
+func (r *AlgorithmRegistry) removeServiceByEndpointLocked(endpoint, taskType string) bool {
+	services, ok := r.services[taskType]
+	if !ok {
+		return false
+	}
+
+	var filtered []conf.AlgorithmService
+	found := false
+	for _, svc := range services {
+		if svc.Endpoint != endpoint {
+			filtered = append(filtered, svc)
+		} else {
+			found = true
+		}
+	}
+
+	r.services[taskType] = filtered
+	return found
+}
+
+// ListAllServiceInstances 列出所有注册的服务实例（按endpoint去重，每个endpoint只返回一次）
+func (r *AlgorithmRegistry) ListAllServiceInstances() []conf.AlgorithmService {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var all []conf.AlgorithmService
+	seenEndpoints := make(map[string]bool)  // 按endpoint去重
+
+	for _, services := range r.services {
+		for _, svc := range services {
+			// 按endpoint去重，每个endpoint只显示一次
+			if !seenEndpoints[svc.Endpoint] {
+				all = append(all, svc)
+				seenEndpoints[svc.Endpoint] = true
+			}
+		}
+	}
+
+	return all
+}
+
+// GetAlgorithmWithLoadBalance 使用负载均衡策略选择一个算法实例并增加调用计数
+// 策略：自适应负载均衡
+// 1. 如果所有实例调用次数相同，使用Round-Robin轮询
+// 2. 否则选择调用次数最少的实例
+// 注意：此函数内部会同时选择实例并递增计数，保证原子性
+func (r *AlgorithmRegistry) GetAlgorithmWithLoadBalance(taskType string) *conf.AlgorithmService {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	services, ok := r.services[taskType]
+	if !ok || len(services) == 0 {
+		return nil
+	}
+
+	if len(services) == 1 {
+		// 只有一个实例，直接返回并增加计数
+		selected := &services[0]
+		r.callCounters[selected.Endpoint]++
+		return selected
+	}
+
+	// 收集所有实例的调用次数
+	counts := make([]int, len(services))
+	for i, svc := range services {
+		counts[i] = r.callCounters[svc.Endpoint]
+	}
+
+	// 检查是否所有实例调用次数相同
+	allEqual := true
+	for i := 1; i < len(counts); i++ {
+		if counts[i] != counts[0] {
+			allEqual = false
+			break
+		}
+	}
+
+	var selected *conf.AlgorithmService
+	var endpoint string
+	
+	if allEqual {
+		// 所有实例负载相同，使用Round-Robin轮询
+		idx := r.rrIndexes[taskType]
+		selected = &services[idx % len(services)]
+		endpoint = selected.Endpoint
+		r.rrIndexes[taskType] = (idx + 1) % len(services)
+		
+		r.log.Debug("load balance: using round-robin",
+			slog.String("task_type", taskType),
+			slog.String("endpoint", endpoint),
+			slog.Int("round_robin_index", idx),
+			slog.Int("call_count", counts[idx]))
+	} else {
+		// 存在负载差异，选择调用次数最少的实例
+		minCount := -1
+		minIdx := 0
+		for i := range services {
+			count := counts[i]
+			if minCount == -1 || count < minCount {
+				minCount = count
+				minIdx = i
+			}
+		}
+		selected = &services[minIdx]
+		endpoint = selected.Endpoint
+		
+		r.log.Debug("load balance: using least-load",
+			slog.String("task_type", taskType),
+			slog.String("endpoint", endpoint),
+			slog.Int("call_count", minCount))
+	}
+
+	// 增加选中实例的调用计数
+	r.callCounters[endpoint]++
+	
+	return selected
+}
+
+// IncrementCallCount 增加调用计数
+// 使用endpoint作为key，因为同一service_id可能有多个不同的endpoint实例
+func (r *AlgorithmRegistry) IncrementCallCount(endpoint string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.callCounters[endpoint]++
+}
+
+// GetCallCount 获取调用次数
+// 使用endpoint作为key，因为同一service_id可能有多个不同的endpoint实例
+func (r *AlgorithmRegistry) GetCallCount(endpoint string) int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.callCounters[endpoint]
+}
+
+// ServiceStat 服务统计信息
+type ServiceStat struct {
+	ServiceID     string   `json:"service_id"`
+	Name          string   `json:"name"`
+	Endpoint      string   `json:"endpoint"`
+	Version       string   `json:"version"`
+	TaskTypes     []string `json:"task_types"`
+	CallCount     int      `json:"call_count"`
+	LastHeartbeat int64    `json:"last_heartbeat"`
+	RegisterAt    int64    `json:"register_at"`
+}
+
+// GetServiceStats 获取服务统计信息
+func (r *AlgorithmRegistry) GetServiceStats(taskType string) []ServiceStat {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	services, ok := r.services[taskType]
+	if !ok {
+		return nil
+	}
+
+	stats := make([]ServiceStat, len(services))
+	for i, svc := range services {
+		stats[i] = ServiceStat{
+			ServiceID:     svc.ServiceID,
+			Name:          svc.Name,
+			Endpoint:      svc.Endpoint,
+			Version:       svc.Version,
+			TaskTypes:     svc.TaskTypes,
+			CallCount:     r.callCounters[svc.Endpoint], // 使用endpoint作为key
+			LastHeartbeat: svc.LastHeartbeat,
+			RegisterAt:    svc.RegisterAt,
+		}
+	}
+
+	return stats
 }
 

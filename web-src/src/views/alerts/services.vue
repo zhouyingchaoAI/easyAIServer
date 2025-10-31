@@ -55,6 +55,9 @@
           <template v-else-if="column.key==='last_heartbeat'">
             {{ formatTime(record.last_heartbeat) }}
           </template>
+          <template v-else-if="column.key==='call_count'">
+            <a-tag color="cyan">{{ record.call_count || 0 }}</a-tag>
+          </template>
         </template>
       </a-table>
 
@@ -85,6 +88,7 @@ const columns = [
   { title: '支持的任务类型', key: 'task_types', width: 280 },
   { title: '推理端点', key: 'endpoint', width: 250, ellipsis: true },
   { title: '版本', key: 'version', width: 90 },
+  { title: '调用次数', key: 'call_count', width: 100, align: 'center' },
   { title: '状态', key: 'status', width: 110 },
   { title: '注册时间', key: 'register_at', width: 170 },
   { title: '最后心跳', key: 'last_heartbeat', width: 170 },

@@ -443,7 +443,11 @@ type AIAnalysisConfig struct {
 	MQTopic             string `json:"mq_topic" mapstructure:"mq_topic"`
 	HeartbeatTimeoutSec int    `json:"heartbeat_timeout_sec" mapstructure:"heartbeat_timeout_sec"`
 	MaxConcurrentInfer  int    `json:"max_concurrent_infer" mapstructure:"max_concurrent_infer"`
+	MaxQueueSize        int    `json:"max_queue_size" mapstructure:"max_queue_size"`           // 推理队列最大容量，默认: 100
 	SaveOnlyWithDetection bool `json:"save_only_with_detection" mapstructure:"save_only_with_detection"` // 只保存有检测结果的告警
+	
+	// 存储路径配置
+	AlertBasePath string `json:"alert_base_path" mapstructure:"alert_base_path"` // 告警图片存储路径前缀，默认: alerts/
 }
 
 // AlgorithmService 算法服务注册信息

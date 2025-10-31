@@ -66,9 +66,9 @@ func registerAIAnalysisAPI(g gin.IRouter) {
 		c.JSON(200, gin.H{"ok": true})
 	})
 
-	// 算法服务心跳
+	// 算法服务心跳（支持按ServiceID或Endpoint更新）
 	ai.POST("/heartbeat/:id", func(c *gin.Context) {
-		serviceID := c.Param("id")
+		id := c.Param("id")
 
 		srv := aianalysis.GetGlobal()
 		if srv == nil {
@@ -82,9 +82,15 @@ func registerAIAnalysisAPI(g gin.IRouter) {
 			return
 		}
 
-		if err := registry.Heartbeat(serviceID); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
+		// 尝试按ServiceID更新心跳
+		err := registry.Heartbeat(id)
+		if err != nil {
+			// 如果失败，尝试按Endpoint更新
+			err = registry.HeartbeatByEndpoint(id)
+			if err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
 		}
 
 		c.JSON(200, gin.H{"ok": true})
@@ -104,8 +110,43 @@ func registerAIAnalysisAPI(g gin.IRouter) {
 			return
 		}
 
-		services := registry.ListAllServices()
-		c.JSON(200, gin.H{"services": services, "total": len(services)})
+		// 获取所有服务实例（包括所有实例，不去重）
+		allServices := registry.ListAllServiceInstances()
+		serviceStats := make([]aianalysis.ServiceStat, len(allServices))
+		for i, svc := range allServices {
+			serviceStats[i] = aianalysis.ServiceStat{
+				ServiceID:     svc.ServiceID,
+				Name:          svc.Name,
+				Endpoint:      svc.Endpoint,
+				Version:       svc.Version,
+				TaskTypes:     svc.TaskTypes,
+				CallCount:     registry.GetCallCount(svc.Endpoint), // 使用endpoint作为key
+				LastHeartbeat: svc.LastHeartbeat,
+				RegisterAt:    svc.RegisterAt,
+			}
+		}
+		
+		c.JSON(200, gin.H{"services": serviceStats, "total": len(serviceStats)})
+	})
+	
+	// 获取指定任务类型的服务统计
+	ai.GET("/services/stats/:task_type", func(c *gin.Context) {
+		taskType := c.Param("task_type")
+		
+		srv := aianalysis.GetGlobal()
+		if srv == nil {
+			c.JSON(500, gin.H{"error": "AI analysis service not ready"})
+			return
+		}
+
+		registry := srv.GetRegistry()
+		if registry == nil {
+			c.JSON(500, gin.H{"error": "registry not ready"})
+			return
+		}
+
+		stats := registry.GetServiceStats(taskType)
+		c.JSON(200, gin.H{"services": stats, "total": len(stats), "task_type": taskType})
 	})
 
 	// 获取推理统计信息

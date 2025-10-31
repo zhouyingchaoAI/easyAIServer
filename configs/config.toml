@@ -205,19 +205,19 @@ use_ssl = false
 base_path = ''
 
 [[frame_extractor.tasks]]
-id = '11111'
+id = '测试1'
 task_type = '人数统计'
-rtsp_url = 'rtsp://127.0.0.1:15544/live/stream_2'
-interval_ms = 3000
-output_path = '11111'
+rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.200:554/LiveMedia/ch1/Media1'
+interval_ms = 200
+output_path = '测试1'
 enabled = true
 
 [[frame_extractor.tasks]]
-id = '人数统计1'
+id = '测试2'
 task_type = '人数统计'
-rtsp_url = 'rtsp://127.0.0.1:15544/live/stream_1'
-interval_ms = 1000
-output_path = '人数统计1'
+rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.200:554/LiveMedia/ch1/Media1'
+interval_ms = 200
+output_path = '测试2'
 enabled = true
 
 [ai_analysis]
@@ -228,4 +228,6 @@ mq_address = ''  # 消息队列地址
 mq_topic = 'easydarwin.alerts'  # 告警推送topic
 heartbeat_timeout_sec = 90  # 算法服务心跳超时（秒）
 max_concurrent_infer = 100  # 最大并发推理任务数
+max_queue_size = 500  # 推理队列最大容量，默认: 100，建议根据实际情况调整
 save_only_with_detection = true  # 只保存有检测结果的告警，无检测结果的图片将被删除
+alert_base_path = 'alerts/'  # 告警图片存储路径前缀，与抽帧路径分离

@@ -12,7 +12,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"sync"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -23,33 +24,53 @@ type Scheduler struct {
 	registry              *AlgorithmRegistry
 	minio                 *minio.Client
 	bucket                string
+	alertBasePath         string // 告警图片存储路径前缀
 	mq                    MessageQueue
 	log                   *slog.Logger
 	semaphore             chan struct{} // 限制并发数
 	saveOnlyWithDetection bool          // 只保存有检测结果的告警
+	httpClient            *http.Client  // 优化的HTTP客户端
 }
 
 // NewScheduler 创建调度器
-func NewScheduler(registry *AlgorithmRegistry, minioClient *minio.Client, bucket string, mq MessageQueue, maxConcurrent int, saveOnlyWithDetection bool, logger *slog.Logger) *Scheduler {
+func NewScheduler(registry *AlgorithmRegistry, minioClient *minio.Client, bucket, alertBasePath string, mq MessageQueue, maxConcurrent int, saveOnlyWithDetection bool, logger *slog.Logger) *Scheduler {
 	if maxConcurrent <= 0 {
 		maxConcurrent = 5
 	}
+	
+	// 优化HTTP客户端配置
+	transport := &http.Transport{
+		MaxIdleConns:          200,
+		MaxIdleConnsPerHost:   50,
+		IdleConnTimeout:       90 * time.Second,
+		DisableCompression:    false,
+		ResponseHeaderTimeout: 60 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	
+	httpClient := &http.Client{
+		Transport: transport,
+		Timeout:   60 * time.Second,
+	}
+	
 	return &Scheduler{
 		registry:              registry,
 		minio:                 minioClient,
 		bucket:                bucket,
+		alertBasePath:         alertBasePath,
 		mq:                    mq,
 		log:                   logger,
 		semaphore:             make(chan struct{}, maxConcurrent),
 		saveOnlyWithDetection: saveOnlyWithDetection,
+		httpClient:            httpClient,
 	}
 }
 
 // ScheduleInference 调度推理
 func (s *Scheduler) ScheduleInference(image ImageInfo) {
-	// 获取该任务类型的所有算法
-	algorithms := s.registry.GetAlgorithms(image.TaskType)
-	if len(algorithms) == 0 {
+	// 使用负载均衡选择一个算法实例
+	algorithm := s.registry.GetAlgorithmWithLoadBalance(image.TaskType)
+	if algorithm == nil {
 		s.log.Debug("no algorithm for task type, deleting image",
 			slog.String("task_type", image.TaskType),
 			slog.String("task_id", image.TaskID),
@@ -68,36 +89,59 @@ func (s *Scheduler) ScheduleInference(image ImageInfo) {
 	s.log.Info("scheduling inference",
 		slog.String("image", image.Path),
 		slog.String("task_type", image.TaskType),
-		slog.Int("algorithms", len(algorithms)))
+		slog.String("algorithm", algorithm.ServiceID),
+		slog.String("endpoint", algorithm.Endpoint))
 
-	// 并发调用所有匹配的算法
-	var wg sync.WaitGroup
-	for _, algo := range algorithms {
-		wg.Add(1)
-		go func(algorithm conf.AlgorithmService) {
-			defer wg.Done()
-			
-			// 限流
-			s.semaphore <- struct{}{}
-			defer func() { <-s.semaphore }()
-			
-			s.inferAndSave(image, algorithm)
-		}(algo)
-	}
-	wg.Wait()
+	// 限流
+	s.semaphore <- struct{}{}
+	defer func() { <-s.semaphore }()
+
+	// 调用选中的算法实例
+	s.inferAndSave(image, *algorithm)
 }
 
 // inferAndSave 调用算法推理并保存结果
 func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmService) {
-	// 生成预签名URL
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	presignedURL, err := s.minio.PresignedGetObject(ctx, s.bucket, image.Path, 1*time.Hour, nil)
-	if err != nil {
-		s.log.Error("failed to generate presigned URL",
+	// 生成预签名URL（带重试机制）
+	var presignedURL *url.URL
+	var err error
+	maxRetries := 3
+	retryDelay := 1 * time.Second
+	
+	for i := 0; i < maxRetries; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		
+		presignedURL, err = s.minio.PresignedGetObject(ctx, s.bucket, image.Path, 1*time.Hour, nil)
+		cancel()
+		
+		if err == nil {
+			if i > 0 {
+				s.log.Info("presigned URL generated after retry",
+					slog.Int("attempt", i+1),
+					slog.String("path", image.Path))
+			}
+			break
+		}
+		
+		// 记录错误详情
+		s.log.Warn("failed to generate presigned URL, retrying...",
+			slog.Int("attempt", i+1),
+			slog.Int("max_retries", maxRetries),
 			slog.String("path", image.Path),
-			slog.String("err", err.Error()))
+			slog.String("err", err.Error()),
+			slog.String("err_type", fmt.Sprintf("%T", err)))
+		
+		if i < maxRetries-1 {
+			time.Sleep(retryDelay)
+			retryDelay *= 2 // 指数退避
+		}
+	}
+	
+	if err != nil {
+		s.log.Error("failed to generate presigned URL after retries",
+			slog.String("path", image.Path),
+			slog.String("err", err.Error()),
+			slog.String("err_type", fmt.Sprintf("%T", err)))
 		// 预签名失败，删除图片避免积压
 		s.deleteImageWithReason(image.Path, "presign_failed")
 		return
@@ -160,7 +204,16 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 			slog.String("algorithm", algorithm.ServiceID),
 			slog.String("image", image.Path),
 			slog.String("err", err.Error()))
-		// 推理失败，不删除图片（可能是算法服务临时故障）
+		// 推理失败，删除图片（避免积压，图片已尝试推理过）
+		if delErr := s.deleteImageWithReason(image.Path, "inference_call_failed"); delErr != nil {
+			s.log.Error("failed to delete image after inference failure",
+				slog.String("path", image.Path),
+				slog.String("err", delErr.Error()))
+		} else {
+			s.log.Info("image deleted after inference failure",
+				slog.String("path", image.Path),
+				slog.String("algorithm", algorithm.ServiceID))
+		}
 		return
 	}
 
@@ -189,35 +242,77 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 		slog.Int64("inference_time_ms", actualInferenceTime),
 		slog.Any("result", resp.Result))
 	
-	// 如果启用了只保存有检测结果的功能，且没有检测结果，则删除图片并跳过保存
-	if s.saveOnlyWithDetection && detectionCount == 0 {
-		s.log.Info("no detection result, deleting image",
-			slog.String("image", image.Path),
-			slog.String("task_id", image.TaskID),
-			slog.String("task_type", image.TaskType),
-			slog.String("algorithm", algorithm.ServiceID))
-		
-		// 删除MinIO中的图片（检测对象为0）
-		if err := s.deleteImageWithReason(image.Path, "no_detection"); err != nil {
-			s.log.Error("failed to delete image with no detection",
-				slog.String("path", image.Path),
+    // 无检测结果：直接删除原路径图片并返回（不保存告警，不推送消息）
+    if detectionCount == 0 {
+        s.log.Info("no detection result, deleting image",
+            slog.String("image", image.Path),
+            slog.String("task_id", image.TaskID),
+            slog.String("task_type", image.TaskType),
+            slog.String("algorithm", algorithm.ServiceID))
+
+        if err := s.deleteImageWithReason(image.Path, "no_detection"); err != nil {
+            s.log.Error("failed to delete image with no detection",
+                slog.String("path", image.Path),
+                slog.String("err", err.Error()))
+        } else {
+            s.log.Info("image deleted successfully (no detection)",
+                slog.String("path", image.Path),
+                slog.String("task_id", image.TaskID))
+        }
+
+        return
+    }
+	
+	// 有检测结果，将图片移动到告警路径
+	var alertImagePath string
+	var alertImageURL string
+	
+    if s.alertBasePath != "" && detectionCount > 0 {
+		// 移动图片到告警路径（移动完成后原文件会被删除）
+		movedPath, err := s.moveImageToAlertPath(image.Path, image.TaskType, image.TaskID)
+		if err != nil {
+			s.log.Error("failed to move image to alert path",
+				slog.String("src", image.Path),
 				slog.String("err", err.Error()))
+			// 移动失败，尝试直接删除原文件（避免积压）
+			if delErr := s.deleteImageWithReason(image.Path, "move_failed"); delErr != nil {
+				s.log.Error("failed to delete image after move failure",
+					slog.String("path", image.Path),
+					slog.String("err", delErr.Error()))
+			}
+			// 移动失败，使用原路径（但原文件已删除，路径可能无效）
+			alertImagePath = image.Path
 		} else {
-			s.log.Info("image deleted successfully (no detection)",
-				slog.String("path", image.Path),
-				slog.String("task_id", image.TaskID))
+			alertImagePath = movedPath
+			// 移动成功，原文件已在moveImageToAlertPath中删除
 		}
 		
-		return // 不保存告警，不推送消息
+		// 为告警图片生成新的预签名URL
+		if alertImagePath != "" {
+			alertURLCtx, alertURLCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer alertURLCancel()
+			
+			presignedAlertURL, err := s.minio.PresignedGetObject(alertURLCtx, s.bucket, alertImagePath, 24*time.Hour, nil)
+			if err == nil {
+				alertImageURL = presignedAlertURL.String()
+			}
+		}
+	} else {
+		// 未配置告警路径，使用原路径，但推理完成后需要删除原文件
+		alertImagePath = image.Path
+		alertImageURL = presignedURL.String()
+		
+		// 保存告警后删除原文件
+		// 注意：这里先保存告警，然后再删除原文件
 	}
 	
-	// 有检测结果，保存告警到数据库
+	// 保存告警到数据库
 	resultJSON, _ := json.Marshal(resp.Result)
 	alert := &model.Alert{
 		TaskID:          image.TaskID,
 		TaskType:        image.TaskType,
-		ImagePath:       image.Path,
-		ImageURL:        presignedURL.String(),
+		ImagePath:       alertImagePath,
+		ImageURL:        alertImageURL,
 		AlgorithmID:     algorithm.ServiceID,
 		AlgorithmName:   algorithm.Name,
 		Result:          string(resultJSON),
@@ -255,42 +350,90 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 				slog.String("task_id", image.TaskID))
 		}
 	}
+	
+	// 如果未配置告警路径（使用了原路径），告警已保存后删除原文件
+	// 注意：删除后alert记录中的ImagePath会失效，但用户要求总是删除原路径
+	if s.alertBasePath == "" && alertImagePath == image.Path {
+		if err := s.deleteImageWithReason(image.Path, "after_inference_no_alert_path"); err != nil {
+			s.log.Error("failed to delete original image after inference (no alert path)",
+				slog.String("path", image.Path),
+				slog.String("task_id", image.TaskID),
+				slog.String("err", err.Error()))
+		} else {
+			s.log.Info("original image deleted after inference (no alert path)",
+				slog.String("path", image.Path),
+				slog.String("task_id", image.TaskID),
+				slog.String("alert_id", fmt.Sprintf("%d", alert.ID)))
+		}
+	}
 }
 
-// callAlgorithm HTTP调用算法服务
+// callAlgorithm HTTP调用算法服务（带重试机制）
 func (s *Scheduler) callAlgorithm(algorithm conf.AlgorithmService, req conf.InferenceRequest) (*conf.InferenceResponse, error) {
 	reqBody, err := json.Marshal(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("marshal request failed: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	maxRetries := 3
+	retryDelay := 2 * time.Second
+	var lastErr error
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", algorithm.Endpoint, bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, err
+	for i := 0; i < maxRetries; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", algorithm.Endpoint, bytes.NewReader(reqBody))
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("create request failed: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		httpResp, err := s.httpClient.Do(httpReq)
+		cancel()
+		
+		if err == nil {
+			defer httpResp.Body.Close()
+
+			if httpResp.StatusCode == http.StatusOK {
+				var resp conf.InferenceResponse
+				if err := json.NewDecoder(httpResp.Body).Decode(&resp); err != nil {
+					return nil, fmt.Errorf("decode response failed: %w", err)
+				}
+				
+				if i > 0 {
+					s.log.Info("algorithm call succeeded after retry",
+						slog.Int("attempt", i+1),
+						slog.String("endpoint", algorithm.Endpoint))
+				}
+				return &resp, nil
+			}
+			
+			// 非200状态码
+			body, _ := io.ReadAll(httpResp.Body)
+			lastErr = fmt.Errorf("HTTP %d: %s", httpResp.StatusCode, string(body))
+		} else {
+			lastErr = err
+		}
+		
+		// 记录错误详情
+		s.log.Warn("algorithm call failed, retrying...",
+			slog.Int("attempt", i+1),
+			slog.Int("max_retries", maxRetries),
+			slog.String("endpoint", algorithm.Endpoint),
+			slog.String("error", lastErr.Error()),
+			slog.String("error_type", fmt.Sprintf("%T", lastErr)))
+		
+		if i < maxRetries-1 {
+			time.Sleep(retryDelay)
+			retryDelay *= 2 // 指数退避
+		}
+		
+		// 重新marshal请求体（bytes.NewReader可能已被读取）
+		reqBody, _ = json.Marshal(req)
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	httpResp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer httpResp.Body.Close()
-
-	if httpResp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(httpResp.Body)
-		return nil, fmt.Errorf("HTTP %d: %s", httpResp.StatusCode, string(body))
-	}
-
-	var resp conf.InferenceResponse
-	if err := json.NewDecoder(httpResp.Body).Decode(&resp); err != nil {
-		return nil, err
-	}
-
-	return &resp, nil
+	return nil, fmt.Errorf("algorithm call failed after %d retries: %w", maxRetries, lastErr)
 }
 
 // extractDetectionCount 从推理结果中提取检测个数
@@ -400,6 +543,57 @@ func (s *Scheduler) deleteImageWithReason(imagePath, reason string) error {
 		slog.String("reason", reason))
 	
 	return nil
+}
+
+// moveImageToAlertPath 将图片移动到告警路径
+func (s *Scheduler) moveImageToAlertPath(imagePath, taskType, taskID string) (string, error) {
+	// 解析原文件名
+	parts := strings.Split(imagePath, "/")
+	if len(parts) == 0 {
+		return "", fmt.Errorf("invalid image path: %s", imagePath)
+	}
+	filename := parts[len(parts)-1]
+	
+	// 构建告警路径：alerts/{task_type}/{task_id}/filename
+	alertPath := fmt.Sprintf("%s%s/%s/%s", s.alertBasePath, taskType, taskID, filename)
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	
+	// 复制对象到新路径
+	src := minio.CopySrcOptions{
+		Bucket: s.bucket,
+		Object: imagePath,
+	}
+	dst := minio.CopyDestOptions{
+		Bucket: s.bucket,
+		Object: alertPath,
+	}
+	
+	_, err := s.minio.CopyObject(ctx, dst, src)
+	if err != nil {
+		s.log.Error("failed to copy image to alert path",
+			slog.String("src", imagePath),
+			slog.String("dst", alertPath),
+			slog.String("err", err.Error()))
+		return "", fmt.Errorf("copy object failed: %w", err)
+	}
+	
+	// 删除原文件（等待复制完成后再删除）
+	if err := s.minio.RemoveObject(ctx, s.bucket, imagePath, minio.RemoveObjectOptions{}); err != nil {
+		s.log.Error("failed to remove original image after move",
+			slog.String("path", imagePath),
+			slog.String("alert_path", alertPath),
+			slog.String("err", err.Error()))
+		// 删除失败，返回错误，调用方需要处理
+		return "", fmt.Errorf("failed to remove original image: %w", err)
+	}
+	
+	s.log.Info("image moved to alert path and original deleted",
+		slog.String("src", imagePath),
+		slog.String("dst", alertPath))
+	
+	return alertPath, nil
 }
 
 // getFrameExtractorService 获取抽帧服务实例

@@ -6,6 +6,7 @@ import (
 	"easydarwin/internal/plugin/frameextractor"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -65,6 +66,16 @@ func (s *Service) Start() error {
 		return fmt.Errorf("failed to init minio: %w", err)
 	}
 
+	// 运行 MinIO 诊断（自动排查 502 问题）
+	debugger := NewMinIODebugger(minioClient, s.fxCfg.MinIO.Bucket, s.log)
+	if err := debugger.DiagnoseWithRetry(2, 2*time.Second); err != nil {
+		s.log.Error("MinIO 诊断发现问题，但继续启动",
+			slog.String("error", err.Error()))
+		// 不阻止启动，但记录警告
+	} else {
+		s.log.Info("MinIO 诊断通过，连接正常")
+	}
+
 	// 初始化消息队列
 	if err := s.initMessageQueue(); err != nil {
 		return fmt.Errorf("failed to init message queue: %w", err)
@@ -78,13 +89,19 @@ func (s *Service) Start() error {
 	s.registry.SetOnRegisterCallback(s.onAlgorithmServiceRegistered)
 
 	// 初始化智能队列
+	maxQueueSize := s.cfg.MaxQueueSize
+	if maxQueueSize <= 0 {
+		maxQueueSize = 100  // 默认值
+	}
+	alertThreshold := maxQueueSize / 2  // 告警阈值设为队列大小的一半
+	
 	s.queue = NewInferenceQueue(
-		100,                    // 最大队列容量
-		StrategyDropOldest,     // 丢弃最旧的策略
-		50,                     // 积压50张告警
-		minioClient,            // MinIO客户端
-		s.fxCfg.MinIO.Bucket,   // MinIO bucket
-		true,                   // 丢弃图片时删除MinIO文件
+		maxQueueSize,         // 最大队列容量（可配置）
+		StrategyDropOldest,   // 丢弃最旧的策略
+		alertThreshold,       // 积压告警阈值
+		minioClient,          // MinIO客户端
+		s.fxCfg.MinIO.Bucket, // MinIO bucket
+		true,                 // 丢弃图片时删除MinIO文件
 		s.log,
 	)
 
@@ -139,7 +156,8 @@ func (s *Service) Start() error {
 	globalService = s
 
 	s.log.Info("AI analysis plugin started successfully",
-		slog.Int("queue_max_size", 100),
+		slog.Int("queue_max_size", maxQueueSize),
+		slog.Int("alert_threshold", alertThreshold),
 		slog.String("queue_strategy", "drop_oldest"),
 		slog.Int64("slow_threshold_ms", 5000))
 	
@@ -165,8 +183,24 @@ func (s *Service) startSmartInferenceLoop() {
 		}
 	})
 	
-	// 启动推理处理循环
-	go s.inferenceProcessLoop()
+	// 启动多个推理处理worker以提升并发处理能力
+	workerCount := s.cfg.MaxConcurrentInfer
+	if workerCount <= 0 {
+		workerCount = 5  // 默认5个worker
+	}
+	// 限制worker数量上限，避免过多goroutine
+	if workerCount > 200 {
+		workerCount = 200
+	}
+	
+	s.log.Info("starting inference workers",
+		slog.Int("worker_count", workerCount),
+		slog.Int("max_concurrent_infer", s.cfg.MaxConcurrentInfer))
+	
+	// 启动多个worker并行处理队列
+	for i := 0; i < workerCount; i++ {
+		go s.inferenceProcessLoop()
+	}
 	
 	// 启动定期统计和检查
 	go s.periodicStatsLoop()
@@ -338,25 +372,69 @@ func (s *Service) initMinIO() (*minio.Client, error) {
 		return nil, fmt.Errorf("minio endpoint and bucket required")
 	}
 
+	// 配置自定义的 HTTP Transport 以解决 502 错误
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+		DisableCompression:   false,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
+	// 创建自定义 HTTP 客户端
+	httpClient := &http.Client{
+		Transport: transport,
+		Timeout:   30 * time.Second,
+	}
+
 	client, err := minio.New(cfg.Endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
-		Secure: cfg.UseSSL,
+		Creds:     credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
+		Secure:    cfg.UseSSL,
+		Transport: transport,
+		Region:    "", // MinIO 默认区域
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create minio client: %w", err)
 	}
 
-	// 测试连接并检查bucket是否存在
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	// 使用自定义 HTTP 客户端（如果 MinIO SDK 支持）
+	_ = httpClient // 保留引用以备将来使用
+
+	// 测试连接并检查bucket是否存在，增加重试机制
+	var exists bool
+	maxRetries := 3
+	retryDelay := 2 * time.Second
 	
-	exists, err := client.BucketExists(ctx, cfg.Bucket)
+	for i := 0; i < maxRetries; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		
+		exists, err = client.BucketExists(ctx, cfg.Bucket)
+		cancel()
+		
+		if err == nil {
+			break
+		}
+		
+		if i < maxRetries-1 {
+			s.log.Warn("minio bucket check failed, retrying...",
+				slog.Int("attempt", i+1),
+				slog.Int("max_retries", maxRetries),
+				slog.String("error", err.Error()))
+			time.Sleep(retryDelay)
+			retryDelay *= 2 // 指数退避
+		}
+	}
+	
 	if err != nil {
-		return nil, fmt.Errorf("failed to check minio bucket: %w", err)
+		return nil, fmt.Errorf("failed to check minio bucket after %d retries: %w", maxRetries, err)
 	}
 	
 	if !exists {
 		s.log.Info("creating minio bucket", slog.String("bucket", cfg.Bucket))
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		
 		if err := client.MakeBucket(ctx, cfg.Bucket, minio.MakeBucketOptions{}); err != nil {
 			return nil, fmt.Errorf("failed to create bucket %s: %w", cfg.Bucket, err)
 		}
@@ -365,7 +443,8 @@ func (s *Service) initMinIO() (*minio.Client, error) {
 
 	s.log.Info("minio client initialized",
 		slog.String("endpoint", cfg.Endpoint),
-		slog.String("bucket", cfg.Bucket))
+		slog.String("bucket", cfg.Bucket),
+		slog.Bool("bucket_exists", exists))
 
 	return client, nil
 }

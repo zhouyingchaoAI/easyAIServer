@@ -1,6 +1,7 @@
 package aianalysis
 
 import (
+	"context"
 	"easydarwin/internal/conf"
 	"easydarwin/internal/plugin/frameextractor"
 	"fmt"
@@ -119,11 +120,17 @@ func (s *Service) Start() error {
 		})
 	})
 
+	// 获取告警路径前缀
+	alertBasePath := s.cfg.AlertBasePath
+	if alertBasePath == "" {
+		alertBasePath = "alerts/"
+	}
+	
 	// 初始化调度器
-	s.scheduler = NewScheduler(s.registry, minioClient, s.fxCfg.MinIO.Bucket, s.mq, s.cfg.MaxConcurrentInfer, s.cfg.SaveOnlyWithDetection, s.log)
+	s.scheduler = NewScheduler(s.registry, minioClient, s.fxCfg.MinIO.Bucket, alertBasePath, s.mq, s.cfg.MaxConcurrentInfer, s.cfg.SaveOnlyWithDetection, s.log)
 
 	// 初始化扫描器
-	s.scanner = NewScanner(minioClient, s.fxCfg.MinIO.Bucket, s.fxCfg.MinIO.BasePath, s.log)
+	s.scanner = NewScanner(minioClient, s.fxCfg.MinIO.Bucket, s.fxCfg.MinIO.BasePath, alertBasePath, s.log)
 
 	// 启动智能推理循环
 	s.startSmartInferenceLoop()
@@ -336,7 +343,24 @@ func (s *Service) initMinIO() (*minio.Client, error) {
 		Secure: cfg.UseSSL,
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create minio client: %w", err)
+	}
+
+	// 测试连接并检查bucket是否存在
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	
+	exists, err := client.BucketExists(ctx, cfg.Bucket)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check minio bucket: %w", err)
+	}
+	
+	if !exists {
+		s.log.Info("creating minio bucket", slog.String("bucket", cfg.Bucket))
+		if err := client.MakeBucket(ctx, cfg.Bucket, minio.MakeBucketOptions{}); err != nil {
+			return nil, fmt.Errorf("failed to create bucket %s: %w", cfg.Bucket, err)
+		}
+		s.log.Info("minio bucket created successfully", slog.String("bucket", cfg.Bucket))
 	}
 
 	s.log.Info("minio client initialized",

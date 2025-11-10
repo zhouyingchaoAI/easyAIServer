@@ -17,14 +17,19 @@
 ## 🚀 快速启动
 
 ```bash
-./easydarwin
+# 安装前端依赖并构建
+make build/local
+
+# 启动后端服务
+./build/easydarwin -conf ./configs/config.toml
 ```
 
-就这么简单！
+构建完成后，日志会提示服务端口；默认 Web 控制台监听在 `http://127.0.0.1:10086`。
+如需直接使用预编译版本，可运行 `deploy/easydarwin`（对应平台）并保持 `configs/` 在同一级目录。
 
 ### 访问地址
 
-- **Web 管理界面**: http://localhost:10008
+- **Web 管理界面**: http://localhost:10086
 - **默认账号**: admin / admin
 
 ## 📋 功能特性
@@ -53,18 +58,22 @@
 
 ```
 yanying/
-├── easydarwin          # 主程序（直接运行）
-├── START.sh            # 启动脚本（可选）
-├── configs/            # 配置文件
-│   └── config.toml     # 主配置
-├── scripts/            # 辅助脚本
-│   ├── 一键启动.sh
-│   ├── test_minio.sh
-│   └── ...
-├── web/                # 前端资源
-├── doc/                # 技术文档
-└── 使用说明.txt        # 快速参考
-
+├── build/                 # 本地构建产物（make build/*）
+├── cmd/                   # Go 服务入口
+├── configs/               # 主配置（config.toml 等）
+├── deploy/                # 预打包的发行版与脚本
+├── doc/
+│   ├── reports/           # 历史修复与排查报告
+│   └── *.md               # 功能/特性文档
+├── examples/              # 示例算法/脚本
+├── scripts/
+│   ├── deploy/            # 发布相关脚本
+│   ├── diagnostics/       # 诊断排查脚本
+│   └── maintenance/       # 日常维护脚本
+├── tests/                 # 手动/集成测试脚本
+├── web/                   # 前端编译结果
+├── web-src/               # 前端源码
+└── README.md
 ```
 
 ## ⚙️ 配置说明
@@ -90,10 +99,10 @@ max_concurrent_infer = 50
 
 ```bash
 # 查看性能统计
-curl http://localhost:10008/api/performance/stats
+curl http://localhost:10086/api/performance/stats
 
 # 查看算法服务
-curl http://localhost:10008/api/ai/services
+curl http://localhost:10086/api/ai/services
 
 # 实时日志
 tail -f logs/sugar.log
@@ -101,30 +110,30 @@ tail -f logs/sugar.log
 
 ## 📖 文档
 
-- [使用说明.txt](使用说明.txt) - 快速参考
-- [README_简易使用.md](README_简易使用.md) - 简易使用指南
-- [README_CN.md](README_CN.md) - 完整中文文档
-- [智能推理使用指南](doc/SMART_INFERENCE_USAGE.md) - 详细的智能推理文档
+- [README_CN.md](README_CN.md) - 中文总览
+- [doc/PROJECT_INTRO_CN.md](doc/PROJECT_INTRO_CN.md) - 平台介绍
+- [doc/FRAME_EXTRACTOR.md](doc/FRAME_EXTRACTOR.md) - 抽帧模块说明
+- [doc/SMART_INFERENCE_USAGE.md](doc/SMART_INFERENCE_USAGE.md) - 智能推理使用手册
+- [doc/reports/](doc/reports/) - 历史修复报告与上线总结
 
 ## 🛠️ 辅助工具
 
-```bash
-# MinIO 连接测试
-scripts/test_minio.sh
-
-# 算法服务演示
-scripts/demo_multi_services.sh
-
-# 完整自动配置启动
-scripts/一键启动.sh
-```
+| 场景 | 脚本 |
+| --- | --- |
+| MinIO 连接测试 | `scripts/test_minio.sh` |
+| 算法服务演示 | `scripts/demo_multi_services.sh` |
+| 一键启动（示例） | `scripts/一键启动.sh` |
+| 告警排查工具 | `scripts/diagnostics/check_alert_issue.py` |
+| 清理抽帧冗余 | `scripts/diagnostics/cleanup_old_frames.py` |
+| 配置迁移与修复 | `scripts/maintenance/` 下的脚本 |
+| 快速部署发布 | `scripts/deploy/deploy_new_version.sh` |
 
 ## 🔧 常见问题
 
 ### 端口被占用
 
 ```bash
-lsof -i :10008   # 检查Web端口
+lsof -i :10086   # 检查Web端口
 lsof -i :15544   # 检查RTSP端口
 ```
 

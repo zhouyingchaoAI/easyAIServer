@@ -46,7 +46,7 @@ cat configs/config.toml | grep -A 30 "\[frame_extractor\]"
 #### 4. 测试完整流程
 ```bash
 # 1. 启动服务
-./server -conf ./configs
+./build/easydarwin -conf ./configs
 
 # 2. UI添加MinIO配置（endpoint/bucket/keys）并保存
 
@@ -64,7 +64,7 @@ cat configs/config.toml | grep -A 15 "\[frame_extractor.minio\]"
 
 # 4. 重启服务
 pkill -f easydarwin
-./server -conf ./configs
+./build/easydarwin -conf ./configs
 
 # 5. UI查看配置是否恢复
 # 访问抽帧管理页，检查MinIO配置是否还在
@@ -75,10 +75,10 @@ pkill -f easydarwin
 #### 方案1：检查配置目录参数
 ```bash
 # 确保使用正确的配置目录启动
-./server -conf /code/EasyDarwin/configs
+./build/easydarwin -conf /code/EasyDarwin/configs
 
 # 或使用绝对路径
-./server -conf $(pwd)/configs
+./build/easydarwin -conf $(pwd)/configs
 ```
 
 #### 方案2：手动验证持久化
@@ -130,11 +130,11 @@ chmod 644 configs/config.toml
 
 #### 1. 检查FFmpeg是否正常工作
 ```bash
-# 测试FFmpeg是否可执行
-./ffmpeg -version
+# 测试FFmpeg是否可执行（优先使用系统 PATH，或仓库内的 deploy/ffmpeg）
+ffmpeg -version || ./deploy/ffmpeg -version
 
 # 手动测试抽帧命令（从日志复制完整命令）
-./ffmpeg -y -rtsp_transport tcp -stimeout 5000000 \
+ffmpeg -y -rtsp_transport tcp -stimeout 5000000 \
   -i "rtsp://user:pass@ip:554/..." \
   -vf fps=1/1.0 -f image2 -strftime 1 \
   "/path/to/snapshots/cam1/%Y%m%d-%H%M%S.jpg"
@@ -316,7 +316,7 @@ curl -X POST http://localhost:10086/api/v1/frame_extractor/snapshots/cam1/batch_
 
 ```bash
 # 1. 启动服务
-./server -conf ./configs
+./build/easydarwin -conf ./configs
 
 # 2. 保存配置（UI或API）
 curl -X POST http://localhost:10086/api/v1/frame_extractor/config \
@@ -333,7 +333,7 @@ grep "interval_ms" configs/config.toml
 # 应该显示: interval_ms = 1500
 
 # 4. 重启服务
-pkill easydarwin && ./server -conf ./configs
+pkill easydarwin && ./build/easydarwin -conf ./configs
 
 # 5. 读取配置
 curl http://localhost:10086/api/v1/frame_extractor/config | jq '.interval_ms'
@@ -358,7 +358,7 @@ cat configs/config.toml | grep -A 6 "id = 'test_cam'"
 # 应该看到完整任务定义
 
 # 3. 重启
-pkill easydarwin && ./server -conf ./configs
+pkill easydarwin && ./build/easydarwin -conf ./configs
 
 # 4. 查询任务
 curl http://localhost:10086/api/v1/frame_extractor/tasks | jq '.items[] | select(.id=="test_cam")'
@@ -384,11 +384,11 @@ chown $USER configs/config.toml
 **解决**：
 ```bash
 # 使用绝对路径启动
-./server -conf /absolute/path/to/configs
+./build/easydarwin -conf /absolute/path/to/configs
 
 # 或相对当前目录
 cd /code/EasyDarwin
-./server -conf ./configs
+./build/easydarwin -conf ./configs
 ```
 
 ### 错误3：failed to persist config

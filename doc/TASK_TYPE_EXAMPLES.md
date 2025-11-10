@@ -327,7 +327,7 @@ task_types = [
 
 ```bash
 pkill server
-./server -conf ./configs
+./build/easydarwin -conf ./configs
 ```
 
 验证：

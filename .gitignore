@@ -1,7 +1,10 @@
 # 编译输出
 build/
 web/
-easydarwin
+/EasyDarwin*
+/easydarwin*
+/ffmpeg*
+/server
 *.exe
 *.dll
 *.so

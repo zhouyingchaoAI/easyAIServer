@@ -68,10 +68,10 @@ max_concurrent_infer = 10
 cd /code/EasyDarwin
 
 # 编译
-go build -o server ./cmd/server
+go build -o build/easydarwin ./cmd/server
 
 # 启动
-./server -conf ./configs
+./build/easydarwin -conf ./configs
 
 # 验证启动
 curl http://localhost:5066/api/v1/version
@@ -526,7 +526,7 @@ sqlite3 configs/data.db "DELETE FROM alerts WHERE task_id LIKE 'e2e_%' OR task_i
 
 # 5. 重启EasyDarwin
 pkill -f easydarwin
-./server -conf ./configs
+./build/easydarwin -conf ./configs
 ```
 
 ---

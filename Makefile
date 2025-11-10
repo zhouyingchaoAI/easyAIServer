@@ -28,7 +28,7 @@ build/linux: frontend
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 \
 	go build -o build/easydarwin_linux_amd64 ./cmd/server
 	# bundle ffmpeg if exists in repo root (optional)
-	@if [ -f ffmpeg ]; then cp ffmpeg build/; fi
+	@if [ -f deploy/ffmpeg ]; then cp deploy/ffmpeg build/; fi
 	@echo "Build artifacts: build/easydarwin_linux_amd64 and web/ assets"
 
 # Local build (frontend + backend for host platform)
@@ -92,7 +92,7 @@ fx-add:
 # Check ffmpeg availability
 fx-check-ffmpeg:
 	@which ffmpeg >/dev/null 2>&1 && echo "ffmpeg found in PATH" || \
-	([ -f ./ffmpeg ] && echo "./ffmpeg present" || (echo "ffmpeg not found. Place binary at ./ffmpeg or install system ffmpeg" && exit 1))
+	([ -f ./deploy/ffmpeg ] && echo "./deploy/ffmpeg present" || (echo "ffmpeg not found. Install via package manager or drop binary to deploy/ffmpeg" && exit 1))
 
 # Run server (current platform), enable plugin, then add a sample task
 # Usage: make fx-run-example RTSP=rtsp://user:pass@ip:554/... [ID=cam1 INTERVAL=1000 OUT=cam1]

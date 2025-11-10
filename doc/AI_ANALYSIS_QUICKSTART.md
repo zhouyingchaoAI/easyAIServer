@@ -144,7 +144,7 @@ docker start kafka
 
 # 终端3：EasyDarwin
 cd /code/EasyDarwin
-./server -conf ./configs
+./build/easydarwin -conf ./configs
 
 # 终端4：算法服务
 cd /code/EasyDarwin/examples

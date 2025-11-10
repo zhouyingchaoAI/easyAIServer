@@ -195,9 +195,11 @@ interval_ms = 1000
 output_dir = './snapshots'
 store = 'minio'
 task_types = ['人数统计', '绊线人数统计', '人员跌倒', '人员离岗', '吸烟检测', '区域入侵', '徘徊检测', '物品遗留', '安全帽检测']
+# 全局默认最大抽帧图片数量（0表示不限制），防止图片积累过多，可被任务级配置覆盖
+max_frame_count = 500
 
 [frame_extractor.minio]
-endpoint = '10.1.6.230:9000'
+endpoint = '172.16.5.207:9000'
 bucket = 'images'
 access_key = 'admin'
 secret_key = 'admin123'
@@ -205,29 +207,258 @@ use_ssl = false
 base_path = ''
 
 [[frame_extractor.tasks]]
-id = '测试1'
+id = '测试3'
 task_type = '人数统计'
 rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.200:554/LiveMedia/ch1/Media1'
-interval_ms = 200
-output_path = '测试1'
+interval_ms = 1000
+output_path = '测试3'
 enabled = true
 
 [[frame_extractor.tasks]]
 id = '测试2'
 task_type = '人数统计'
 rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.200:554/LiveMedia/ch1/Media1'
-interval_ms = 200
+interval_ms = 1000
 output_path = '测试2'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '测试1'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.200:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '测试1'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '测试4'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.200:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '测试4'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '测试5'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.200:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '测试5'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '测试6'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.200:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '测试6'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '测试10'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.200:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '测试10'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '测试9'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.200:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '测试9'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '测试7'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.200:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '测试7'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '测试8'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.200:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '测试8'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '门口1'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.17:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '门口1'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '门口2'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.17:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '门口2'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '门口3'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.17:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '门口3'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '门口4'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.17:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '门口4'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '门口5'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.17:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '门口5'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '门口6'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.17:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '门口6'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '门口7'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.17:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '门口7'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '门口8'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.17:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '门口8'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '门口9'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.17:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '门口9'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '门口10'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.17:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '门口10'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '厕所1'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.9:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '厕所1'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '厕所2'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.9:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '厕所2'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '厕所3'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.9:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '厕所3'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '厕所4'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.9:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '厕所4'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '厕所5'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.9:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '厕所5'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '厕所6'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.9:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '厕所6'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '厕所7'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.9:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '厕所7'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '厕所8'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.9:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '厕所8'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '厕所9'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.9:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '厕所9'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '厕所10'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.9:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '厕所10'
 enabled = true
 
 [ai_analysis]
 enable = true  # 启用智能分析插件
-scan_interval_sec = 5  # MinIO扫描间隔（秒）
+scan_interval_sec = 1  # MinIO扫描间隔（秒）
 mq_type = 'kafka'  # 消息队列类型：kafka|rabbitmq
 mq_address = ''  # 消息队列地址
 mq_topic = 'easydarwin.alerts'  # 告警推送topic
-heartbeat_timeout_sec = 90  # 算法服务心跳超时（秒）
+heartbeat_timeout_sec = 60  # 算法服务心跳超时（秒）
 max_concurrent_infer = 100  # 最大并发推理任务数
-max_queue_size = 500  # 推理队列最大容量，默认: 100，建议根据实际情况调整
+max_queue_size = 5000  # 推理队列最大容量，默认: 100，建议根据实际情况调整
 save_only_with_detection = true  # 只保存有检测结果的告警，无检测结果的图片将被删除
 alert_base_path = 'alerts/'  # 告警图片存储路径前缀，与抽帧路径分离
+
+# 批量写入优化配置（降低数据库写入延迟）
+alert_batch_enabled = true  # 启用批量写入（建议开启，可提升性能2-4倍）
+alert_batch_size = 100  # 批量大小：达到此数量时触发写入
+alert_batch_interval_sec = 2  # 刷新间隔：每隔N秒自动写入（即使未达到批量大小）

@@ -33,6 +33,15 @@ type Service struct {
     // monitoring stats
     stats      TaskStats
     statsMu    sync.RWMutex
+    // frame cleanup counters (per task)
+    cleanupCounters map[string]*cleanupCounter
+    cleanupMu       sync.Mutex
+}
+
+// cleanupCounter 清理计数器，用于限流
+type cleanupCounter struct {
+    uploadCount  int       // 上传计数
+    lastCleanup  time.Time // 上次清理时间
 }
 
 // TaskStats 任务统计信息
@@ -71,10 +80,11 @@ type SystemMonitorInfo struct {
 
 func New(cfg *conf.FrameExtractorConfig) *Service {
     return &Service{
-        cfg:       cfg,
-        log:       slog.Default(),
-        stop:      make(chan struct{}),
-        taskStops: make(map[string]chan struct{}),
+        cfg:             cfg,
+        log:             slog.Default(),
+        stop:            make(chan struct{}),
+        taskStops:       make(map[string]chan struct{}),
+        cleanupCounters: make(map[string]*cleanupCounter),
     }
 }
 
@@ -248,6 +258,11 @@ func (s *Service) RemoveTask(id string) bool {
         close(ch)
         delete(s.taskStops, id)
     }
+    
+    // remove cleanup counter
+    s.cleanupMu.Lock()
+    delete(s.cleanupCounters, id)
+    s.cleanupMu.Unlock()
     
     // remove from cfg slice regardless of running state
     tasks := s.cfg.Tasks[:0]
@@ -474,7 +489,7 @@ func (s *Service) extractSinglePreviewFrame(task conf.FrameExtractTask) {
 		if taskType == "" {
 			taskType = "未分类"
 		}
-		key := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.OutputPath, filename))
+		key := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.ID, filename))
 		
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -496,7 +511,7 @@ func (s *Service) extractSinglePreviewFrame(task conf.FrameExtractTask) {
 			slog.String("path", key))
 	} else {
 		// 保存到本地
-		localDir := filepath.Join(s.cfg.OutputDir, task.OutputPath)
+		localDir := filepath.Join(s.cfg.OutputDir, task.ID)
 		if err := os.MkdirAll(localDir, 0o755); err != nil {
 			s.log.Error("failed to create local dir", 
 				slog.String("task", task.ID), 
@@ -559,7 +574,7 @@ func (s *Service) SaveAlgorithmConfig(taskID string, config []byte) error {
 	if taskType == "" {
 		taskType = "未分类"
 	}
-	configKey := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.OutputPath, "algo_config.json"))
+	configKey := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.ID, "algo_config.json"))
 	
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -621,7 +636,7 @@ func (s *Service) GetAlgorithmConfig(taskID string) ([]byte, error) {
 	if taskType == "" {
 		taskType = "未分类"
 	}
-	configKey := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.OutputPath, "algo_config.json"))
+	configKey := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.ID, "algo_config.json"))
 	
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -667,7 +682,7 @@ func (s *Service) GetAlgorithmConfigPath(taskID string) string {
 	if taskType == "" {
 		taskType = "未分类"
 	}
-	configKey := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.OutputPath, "algo_config.json"))
+	configKey := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.ID, "algo_config.json"))
 	
 	return configKey
 }

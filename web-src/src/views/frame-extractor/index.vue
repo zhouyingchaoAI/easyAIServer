@@ -159,6 +159,10 @@
           <a-tag :color="config.store === 'minio' ? 'blue' : 'green'">
             {{ config.store === 'minio' ? 'MinIO存储' : '本地存储' }}
           </a-tag>
+          <a-button @click="refreshTaskList" :loading="taskListLoading" size="small">
+            <template #icon><ReloadOutlined /></template>
+            刷新列表
+          </a-button>
           <a-button type="primary" @click="goToGallery">
             <template #icon><PictureOutlined /></template>
             查看抽帧结果
@@ -246,6 +250,7 @@
         row-key="id" 
         :pagination="{ pageSize: 10, showTotal: (total) => `共 ${total} 条` }"
         :scroll="{ x: 1200 }"
+        :loading="taskListLoading"
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.key==='id'">
@@ -413,6 +418,7 @@ const form = ref({ id: '', task_type: '', rtsp_url: '', interval_ms: 1000, outpu
 const loading = ref(false)
 const configLoading = ref(false)
 const configLoadSuccess = ref(false)
+const taskListLoading = ref(false)
 const items = ref([])
 const taskActionLoading = ref({})
 const editingInterval = ref({})
@@ -573,6 +579,19 @@ const fetchList = async () => {
   items.value = data?.items || []
 }
 
+// 刷新任务列表（带加载状态和提示）
+const refreshTaskList = async () => {
+  taskListLoading.value = true
+  try {
+    await fetchList()
+    message.success('任务列表已刷新')
+  } catch (e) {
+    message.error('刷新失败: ' + (e?.response?.data?.error || e.message))
+  } finally {
+    taskListLoading.value = false
+  }
+}
+
 const onAdd = async () => {
   if (!form.value.id || !form.value.task_type || !form.value.rtsp_url) {
     message.error('请填写任务ID、任务类型与RTSP地址')
@@ -666,8 +685,16 @@ const openAlgoConfig = (record) => {
 }
 
 const handleAlgoConfigSaved = async () => {
-  message.success('算法配置已保存')
-  await fetchList()
+  message.success('算法配置已保存，正在刷新任务列表...')
+  taskListLoading.value = true
+  try {
+    await fetchList()
+    message.success('任务列表已更新，配置状态已同步')
+  } catch (e) {
+    message.error('刷新任务列表失败: ' + (e?.response?.data?.error || e.message))
+  } finally {
+    taskListLoading.value = false
+  }
 }
 
 onMounted(() => {

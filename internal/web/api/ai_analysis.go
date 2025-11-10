@@ -65,8 +65,31 @@ func registerAIAnalysisAPI(g gin.IRouter) {
 
 		c.JSON(200, gin.H{"ok": true})
 	})
+	
+	// 清空所有算法服务（用于清理测试数据或重置）
+	ai.POST("/clear_all", func(c *gin.Context) {
+		srv := aianalysis.GetGlobal()
+		if srv == nil {
+			c.JSON(500, gin.H{"error": "AI analysis service not ready"})
+			return
+		}
 
-	// 算法服务心跳（支持按ServiceID或Endpoint更新）
+		registry := srv.GetRegistry()
+		if registry == nil {
+			c.JSON(500, gin.H{"error": "registry not ready"})
+			return
+		}
+
+		count := registry.ClearAllServices()
+		
+		slog.Warn("algorithm services cleared by API request",
+			slog.String("remote_addr", c.ClientIP()),
+			slog.Int("cleared_count", count))
+
+		c.JSON(200, gin.H{"ok": true, "cleared_count": count, "message": "所有算法服务已清空"})
+	})
+
+	// 算法服务心跳（支持按ServiceID或Endpoint更新，可选携带性能统计）
 	ai.POST("/heartbeat/:id", func(c *gin.Context) {
 		id := c.Param("id")
 
@@ -82,11 +105,18 @@ func registerAIAnalysisAPI(g gin.IRouter) {
 			return
 		}
 
+		// 解析心跳请求体（可选的性能统计数据）
+		var heartbeatReq conf.HeartbeatRequest
+		if err := c.ShouldBindJSON(&heartbeatReq); err != nil {
+			// 如果没有请求体或解析失败，当作普通心跳处理（向后兼容）
+			heartbeatReq = conf.HeartbeatRequest{}
+		}
+
 		// 尝试按ServiceID更新心跳
-		err := registry.Heartbeat(id)
+		err := registry.HeartbeatWithStats(id, &heartbeatReq)
 		if err != nil {
 			// 如果失败，尝试按Endpoint更新
-			err = registry.HeartbeatByEndpoint(id)
+			err = registry.HeartbeatByEndpointWithStats(id, &heartbeatReq)
 			if err != nil {
 				c.JSON(400, gin.H{"error": err.Error()})
 				return
@@ -110,7 +140,7 @@ func registerAIAnalysisAPI(g gin.IRouter) {
 			return
 		}
 
-		// 获取所有服务实例（包括所有实例，不去重）
+		// 获取所有服务实例（按endpoint去重 - 一个endpoint代表一个物理服务实例）
 		allServices := registry.ListAllServiceInstances()
 		serviceStats := make([]aianalysis.ServiceStat, len(allServices))
 		for i, svc := range allServices {
@@ -126,7 +156,172 @@ func registerAIAnalysisAPI(g gin.IRouter) {
 			}
 		}
 		
+		// 添加调试日志：记录实际有多少不同的endpoint
+		slog.Info("listing algorithm services",
+			slog.Int("unique_endpoints", len(serviceStats)),
+			slog.Int("returned_count", len(allServices)))
+		
 		c.JSON(200, gin.H{"services": serviceStats, "total": len(serviceStats)})
+	})
+	
+	// 获取负载均衡信息
+	ai.GET("/load_balance/info", func(c *gin.Context) {
+		srv := aianalysis.GetGlobal()
+		if srv == nil {
+			c.JSON(500, gin.H{"error": "AI analysis service not ready"})
+			return
+		}
+
+		registry := srv.GetRegistry()
+		if registry == nil {
+			c.JSON(500, gin.H{"error": "registry not ready"})
+			return
+		}
+
+		// 获取所有任务类型的负载均衡信息
+		info := registry.GetAllLoadBalanceInfo()
+		
+		c.JSON(200, gin.H{
+			"load_balance": info,
+			"total_task_types": len(info),
+		})
+	})
+	
+	// 调试接口：查看所有服务详情（不去重，显示内部存储的所有记录）
+	ai.GET("/services/debug", func(c *gin.Context) {
+		srv := aianalysis.GetGlobal()
+		if srv == nil {
+			c.JSON(500, gin.H{"error": "AI analysis service not ready"})
+			return
+		}
+
+		registry := srv.GetRegistry()
+		if registry == nil {
+			c.JSON(500, gin.H{"error": "registry not ready"})
+			return
+		}
+
+		// 获取所有任务类型的服务
+		debugInfo := make(map[string][]aianalysis.ServiceStat)
+		totalRecords := 0
+		
+		for _, taskType := range []string{"人数统计", "客流分析", "人头检测", "绊线人数统计", "人员跌倒", "人员离岗", "吸烟检测", "区域入侵", "徘徊检测", "物品遗留", "安全帽检测"} {
+			services := registry.GetAlgorithms(taskType)
+			if len(services) > 0 {
+				stats := make([]aianalysis.ServiceStat, len(services))
+				for i, svc := range services {
+					stats[i] = aianalysis.ServiceStat{
+						ServiceID:     svc.ServiceID,
+						Name:          svc.Name,
+						Endpoint:      svc.Endpoint,
+						Version:       svc.Version,
+						TaskTypes:     svc.TaskTypes,
+						CallCount:     registry.GetCallCount(svc.Endpoint),
+						LastHeartbeat: svc.LastHeartbeat,
+						RegisterAt:    svc.RegisterAt,
+					}
+				}
+				debugInfo[taskType] = stats
+				totalRecords += len(services)
+			}
+		}
+		
+		c.JSON(200, gin.H{
+			"task_types":    debugInfo,
+			"total_records": totalRecords,
+			"unique_endpoints": len(registry.ListAllServiceInstances()),
+		})
+	})
+	
+	// 负载均衡分析接口
+	ai.GET("/load_balance/analysis", func(c *gin.Context) {
+		srv := aianalysis.GetGlobal()
+		if srv == nil {
+			c.JSON(500, gin.H{"error": "AI analysis service not ready"})
+			return
+		}
+
+		registry := srv.GetRegistry()
+		if registry == nil {
+			c.JSON(500, gin.H{"error": "registry not ready"})
+			return
+		}
+
+		// 按任务类型统计负载分布
+		analysis := make(map[string]interface{})
+		
+		for _, taskType := range []string{"人数统计", "客流分析", "人头检测", "绊线人数统计"} {
+			services := registry.GetAlgorithms(taskType)
+			if len(services) == 0 {
+				continue
+			}
+			
+			// 统计每个服务的调用次数
+			serviceStats := make([]map[string]interface{}, 0)
+			totalCalls := 0
+			minCalls := -1
+			maxCalls := 0
+			
+			for _, svc := range services {
+				callCount := registry.GetCallCount(svc.Endpoint)
+				totalCalls += callCount
+				
+				if minCalls == -1 || callCount < minCalls {
+					minCalls = callCount
+				}
+				if callCount > maxCalls {
+					maxCalls = callCount
+				}
+				
+				serviceStats = append(serviceStats, map[string]interface{}{
+					"service_id": svc.ServiceID,
+					"endpoint":   svc.Endpoint,
+					"call_count": callCount,
+				})
+			}
+			
+			// 计算负载均衡度（方差）
+			avgCalls := 0.0
+			if len(services) > 0 {
+				avgCalls = float64(totalCalls) / float64(len(services))
+			}
+			
+			variance := 0.0
+			for _, svc := range services {
+				callCount := float64(registry.GetCallCount(svc.Endpoint))
+				diff := callCount - avgCalls
+				variance += diff * diff
+			}
+			if len(services) > 0 {
+				variance /= float64(len(services))
+			}
+			
+			// 负载均衡质量评估
+			balanceQuality := "excellent"
+			if len(services) > 1 {
+				diff := maxCalls - minCalls
+				if diff > int(avgCalls*0.5) {
+					balanceQuality = "poor"
+				} else if diff > int(avgCalls*0.2) {
+					balanceQuality = "fair"
+				} else {
+					balanceQuality = "good"
+				}
+			}
+			
+			analysis[taskType] = map[string]interface{}{
+				"service_count":    len(services),
+				"total_calls":      totalCalls,
+				"avg_calls":        avgCalls,
+				"min_calls":        minCalls,
+				"max_calls":        maxCalls,
+				"variance":         variance,
+				"balance_quality":  balanceQuality,
+				"services":         serviceStats,
+			}
+		}
+		
+		c.JSON(200, gin.H{"analysis": analysis})
 	})
 	
 	// 获取指定任务类型的服务统计
@@ -201,9 +396,27 @@ func registerAlertAPI(g gin.IRouter) {
 		}
 
 		list, total, err := data.ListAlerts(filter)
-		if err != nil {
+		if err != nil{
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
+		}
+
+		// 为告警动态生成预签名URL（按需生成，不阻塞推理）
+		srv := aianalysis.GetGlobal()
+		if srv != nil {
+			for i := range list {
+				if list[i].ImageURL == "" && list[i].ImagePath != "" {
+					url, err := srv.GeneratePresignedURL(list[i].ImagePath)
+					if err == nil {
+						list[i].ImageURL = url
+					} else {
+						slog.Warn("failed to generate presigned URL for alert",
+							slog.Uint64("alert_id", uint64(list[i].ID)),
+							slog.String("image_path", list[i].ImagePath),
+							slog.String("err", err.Error()))
+					}
+				}
+			}
 		}
 
 		c.JSON(200, gin.H{"items": list, "total": total})
@@ -211,18 +424,32 @@ func registerAlertAPI(g gin.IRouter) {
 
 	// 获取告警详情
 	alerts.GET("/:id", func(c *gin.Context) {
-		var id uint
-		if err := c.ShouldBindUri(&struct {
+		var uriParam struct {
 			ID uint `uri:"id" binding:"required"`
-		}{ID: id}); err != nil {
+		}
+		if err := c.ShouldBindUri(&uriParam); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
 
-		alert, err := data.GetAlertByID(id)
+		alert, err := data.GetAlertByID(uriParam.ID)
 		if err != nil {
 			c.JSON(404, gin.H{"error": "alert not found"})
 			return
+		}
+
+		// 为告警动态生成预签名URL
+		srv := aianalysis.GetGlobal()
+		if srv != nil && alert.ImageURL == "" && alert.ImagePath != "" {
+			url, err := srv.GeneratePresignedURL(alert.ImagePath)
+			if err == nil {
+				alert.ImageURL = url
+			} else {
+				slog.Warn("failed to generate presigned URL for alert",
+					slog.Uint64("alert_id", uint64(alert.ID)),
+					slog.String("image_path", alert.ImagePath),
+					slog.String("err", err.Error()))
+			}
 		}
 
 		c.JSON(200, gin.H{"alert": alert})

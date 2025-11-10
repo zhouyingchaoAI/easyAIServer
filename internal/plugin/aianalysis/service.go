@@ -3,6 +3,7 @@ package aianalysis
 import (
 	"context"
 	"easydarwin/internal/conf"
+	"easydarwin/internal/data"
 	"easydarwin/internal/plugin/frameextractor"
 	"fmt"
 	"log/slog"
@@ -15,16 +16,17 @@ import (
 
 // Service AI分析主服务
 type Service struct {
-	cfg       *conf.AIAnalysisConfig
-	fxCfg     *conf.FrameExtractorConfig // Frame Extractor配置
-	registry  *AlgorithmRegistry
-	scanner   *Scanner
-	scheduler *Scheduler
-	mq        MessageQueue
-	queue     *InferenceQueue     // 智能队列
-	monitor   *PerformanceMonitor // 性能监控
-	alertMgr  *AlertManager       // 告警管理
-	log       *slog.Logger
+	cfg              *conf.AIAnalysisConfig
+	fxCfg            *conf.FrameExtractorConfig // Frame Extractor配置
+	registry         *AlgorithmRegistry
+	scanner          *Scanner
+	scheduler        *Scheduler
+	mq               MessageQueue
+	queue            *InferenceQueue            // 智能队列
+	monitor          *PerformanceMonitor        // 性能监控
+	alertMgr         *AlertManager              // 告警管理
+	alertBatchWriter *data.AlertBatchWriter     // 批量写入告警
+	log              *slog.Logger
 }
 
 var globalService *Service
@@ -87,6 +89,9 @@ func (s *Service) Start() error {
 	
 	// 设置注册回调：算法服务上线时自动启动已配置的任务
 	s.registry.SetOnRegisterCallback(s.onAlgorithmServiceRegistered)
+	
+	// 设置注销回调：算法服务下线时记录日志
+	s.registry.SetOnUnregisterCallback(s.onAlgorithmServiceUnregistered)
 
 	// 初始化智能队列
 	maxQueueSize := s.cfg.MaxQueueSize
@@ -143,8 +148,25 @@ func (s *Service) Start() error {
 		alertBasePath = "alerts/"
 	}
 	
+	// 初始化批量写入器
+	batchSize := s.cfg.AlertBatchSize
+	if batchSize <= 0 {
+		batchSize = 100
+	}
+	batchInterval := s.cfg.AlertBatchIntervalSec
+	if batchInterval <= 0 {
+		batchInterval = 2
+	}
+	s.alertBatchWriter = data.NewAlertBatchWriter(
+		batchSize,
+		batchInterval,
+		s.cfg.AlertBatchEnabled,
+		s.log.With(slog.String("component", "alert_batch_writer")),
+	)
+	s.alertBatchWriter.Start()
+	
 	// 初始化调度器
-	s.scheduler = NewScheduler(s.registry, minioClient, s.fxCfg.MinIO.Bucket, alertBasePath, s.mq, s.cfg.MaxConcurrentInfer, s.cfg.SaveOnlyWithDetection, s.log)
+	s.scheduler = NewScheduler(s.registry, minioClient, s.fxCfg.MinIO.Bucket, alertBasePath, s.mq, s.cfg.MaxConcurrentInfer, s.cfg.SaveOnlyWithDetection, s.alertBatchWriter, s.log)
 
 	// 初始化扫描器
 	s.scanner = NewScanner(minioClient, s.fxCfg.MinIO.Bucket, s.fxCfg.MinIO.BasePath, alertBasePath, s.log)
@@ -271,6 +293,12 @@ func (s *Service) Stop() error {
 
 	if s.registry != nil {
 		s.registry.StopHeartbeatChecker()
+	}
+	
+	// 停止批量写入器（会刷新剩余数据）
+	if s.alertBatchWriter != nil {
+		s.log.Info("stopping alert batch writer and flushing remaining alerts")
+		s.alertBatchWriter.Stop()
 	}
 
 	if s.mq != nil {
@@ -511,8 +539,34 @@ func (s *Service) onAlgorithmServiceRegistered(serviceID string, taskTypes []str
 	}
 }
 
+// onAlgorithmServiceUnregistered 算法服务注销时的回调
+func (s *Service) onAlgorithmServiceUnregistered(serviceID string, reason string) {
+	s.log.Warn("algorithm service offline",
+		slog.String("service_id", serviceID),
+		slog.String("reason", reason))
+	
+	// 可以在这里添加额外的处理逻辑，例如：
+	// - 通知管理员服务下线
+	// - 暂停相关的抽帧任务（可选）
+	// - 记录服务中断事件
+	
+	// 注意：不要自动停止抽帧任务，因为：
+	// 1. 服务可能只是临时故障，很快会恢复
+	// 2. 可能有其他算法服务可以处理相同的任务类型
+	// 3. 图片会继续抽帧并存储，等待服务恢复后处理
+}
+
 // getFrameExtractorService 获取抽帧服务实例
 func (s *Service) getFrameExtractorService() *frameextractor.Service {
 	return frameextractor.GetGlobal()
+}
+
+// GeneratePresignedURL 为图片路径生成预签名URL
+func (s *Service) GeneratePresignedURL(imagePath string) (string, error) {
+	if s.scheduler == nil {
+		return "", fmt.Errorf("scheduler not initialized")
+	}
+	
+	return s.scheduler.generatePresignedURL(imagePath)
 }
 

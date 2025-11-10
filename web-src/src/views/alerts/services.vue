@@ -56,7 +56,25 @@
             {{ formatTime(record.last_heartbeat) }}
           </template>
           <template v-else-if="column.key==='call_count'">
-            <a-tag color="cyan">{{ record.call_count || 0 }}</a-tag>
+            <a-tag color="cyan">{{ formatNumber(record.call_count || 0) }}</a-tag>
+          </template>
+          <template v-else-if="column.key==='last_inference_time_ms'">
+            <a-tag v-if="record.last_inference_time_ms > 0" color="blue">
+              {{ formatMs(record.last_inference_time_ms) }}
+            </a-tag>
+            <span v-else style="color: #999;">-</span>
+          </template>
+          <template v-else-if="column.key==='last_total_time_ms'">
+            <a-tag v-if="record.last_total_time_ms > 0" color="purple">
+              {{ formatMs(record.last_total_time_ms) }}
+            </a-tag>
+            <span v-else style="color: #999;">-</span>
+          </template>
+          <template v-else-if="column.key==='avg_inference_time_ms'">
+            <a-tag v-if="record.avg_inference_time_ms > 0" :color="getPerformanceColor(record.avg_inference_time_ms)">
+              {{ formatMs(record.avg_inference_time_ms) }}
+            </a-tag>
+            <span v-else style="color: #999;">-</span>
           </template>
         </template>
       </a-table>
@@ -85,13 +103,15 @@ const services = ref([])
 const columns = [
   { title: '服务ID', key: 'service_id', width: 180, ellipsis: true },
   { title: '服务名称', key: 'name', width: 150 },
-  { title: '支持的任务类型', key: 'task_types', width: 280 },
-  { title: '推理端点', key: 'endpoint', width: 250, ellipsis: true },
-  { title: '版本', key: 'version', width: 90 },
+  { title: '支持的任务类型', key: 'task_types', width: 250 },
+  { title: '推理端点', key: 'endpoint', width: 220, ellipsis: true },
+  { title: '版本', key: 'version', width: 80 },
+  { title: '状态', key: 'status', width: 100 },
   { title: '调用次数', key: 'call_count', width: 100, align: 'center' },
-  { title: '状态', key: 'status', width: 110 },
-  { title: '注册时间', key: 'register_at', width: 170 },
-  { title: '最后心跳', key: 'last_heartbeat', width: 170 },
+  { title: '推理时间', key: 'last_inference_time_ms', width: 100, align: 'center' },
+  { title: '总耗时', key: 'last_total_time_ms', width: 100, align: 'center' },
+  { title: '平均耗时', key: 'avg_inference_time_ms', width: 100, align: 'center' },
+  { title: '最后心跳', key: 'last_heartbeat', width: 150 },
 ]
 
 const fetchServices = async () => {
@@ -131,6 +151,26 @@ const formatTime = (timestamp) => {
   if (!timestamp) return '-'
   const date = new Date(timestamp * 1000)
   return date.toLocaleString('zh-CN')
+}
+
+// 格式化毫秒数
+const formatMs = (ms) => {
+  if (!ms || ms === 0) return '-'
+  return `${ms.toFixed(2)}ms`
+}
+
+// 格式化数字（添加千位分隔符）
+const formatNumber = (num) => {
+  if (!num) return '0'
+  return num.toLocaleString('zh-CN')
+}
+
+// 根据性能获取颜色
+const getPerformanceColor = (avgMs) => {
+  if (avgMs < 50) return 'green'    // 快速
+  if (avgMs < 100) return 'blue'    // 良好
+  if (avgMs < 200) return 'orange'  // 一般
+  return 'red'                      // 慢速
 }
 
 onMounted(() => {

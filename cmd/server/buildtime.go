@@ -1,6 +1,5 @@
 package main
 
-import "C"
 import (
 	"strconv"
 	"time"

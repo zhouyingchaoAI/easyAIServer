@@ -66,7 +66,7 @@ func (s *Service) runLocalSinkLoop(task conf.FrameExtractTask) {
     if taskType == "" {
         taskType = "未分类"
     }
-    dir := filepath.Join(baseDir, taskType, task.OutputPath)
+    dir := filepath.Join(baseDir, taskType, task.ID)
     _ = os.MkdirAll(dir, 0o755)
 
     minBackoff := 1 * time.Second
@@ -142,7 +142,7 @@ func (s *Service) runLocalSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
     if taskType == "" {
         taskType = "未分类"
     }
-    dir := filepath.Join(baseDir, taskType, task.OutputPath)
+    dir := filepath.Join(baseDir, taskType, task.ID)
     _ = os.MkdirAll(dir, 0o755)
 
     minBackoff := 1 * time.Second

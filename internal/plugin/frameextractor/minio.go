@@ -114,7 +114,7 @@ func (s *Service) createMinioPath(task conf.FrameExtractTask) error {
 	
 	// create a .keep file to establish the path
 	// use forward slashes for MinIO paths (S3 convention)
-	key := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.OutputPath, ".keep"))
+	key := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.ID, ".keep"))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	
@@ -143,7 +143,7 @@ func (s *Service) deleteMinioPath(task conf.FrameExtractTask) error {
 	}
 	
 	// use forward slashes for S3/MinIO
-	prefix := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.OutputPath)) + "/"
+	prefix := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.ID)) + "/"
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	
@@ -270,7 +270,7 @@ func (s *Service) runMinioSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
 					taskType = "未分类"
 				}
 				// use forward slashes for MinIO/S3 paths
-				key := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.OutputPath, fmt.Sprintf("%s.jpg", ts)))
+				key := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.ID, fmt.Sprintf("%s.jpg", ts)))
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				_, err = s.minio.client.PutObject(ctx, s.minio.bucket, key, &frame, int64(frame.Len()), minio.PutObjectOptions{
 					ContentType: "image/jpeg",
@@ -280,6 +280,17 @@ func (s *Service) runMinioSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
 					s.log.Warn("minio upload failed", slog.String("task", task.ID), slog.String("key", key), slog.String("err", err.Error()))
 				} else {
 					s.log.Debug("uploaded snapshot", slog.String("task", task.ID), slog.String("key", key), slog.Int("size", frame.Len()))
+					
+					// 检查并清理超出限制的旧图片（带限流控制）
+					maxCount := getMaxFrameCount(task, s.cfg)
+					if maxCount > 0 && s.shouldCleanup(task.ID) {
+						// 异步清理，避免阻塞上传流程
+						go func(t conf.FrameExtractTask, max int) {
+							if err := s.cleanupOldFrames(t, max); err != nil {
+								s.log.Warn("cleanup failed", slog.String("task", t.ID), slog.String("err", err.Error()))
+							}
+						}(task, maxCount)
+					}
 				}
 			}
 		}()
@@ -316,3 +327,145 @@ func (s *Service) runMinioSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
 	}
 }
 
+// cleanupOldFrames 清理超出数量限制的旧图片
+// 保留最新的maxCount张图片，删除更早的图片
+func (s *Service) cleanupOldFrames(task conf.FrameExtractTask, maxCount int) error {
+	if s.minio == nil {
+		return fmt.Errorf("minio not initialized")
+	}
+	
+	if maxCount <= 0 {
+		return nil // 0表示不限制
+	}
+	
+	// 构建任务目录前缀
+	taskType := task.TaskType
+	if taskType == "" {
+		taskType = "未分类"
+	}
+	prefix := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.ID)) + "/"
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	
+	// 列出所有图片文件（排除.keep和algo_config.json等非图片文件）
+	objectCh := s.minio.client.ListObjects(ctx, s.minio.bucket, minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+	})
+	
+	// 收集所有jpg图片及其时间戳
+	type objectInfo struct {
+		key     string
+		lastMod time.Time
+	}
+	var objects []objectInfo
+	
+	for object := range objectCh {
+		if object.Err != nil {
+			s.log.Warn("list object error during cleanup", slog.String("err", object.Err.Error()))
+			continue
+		}
+		
+		// 只处理.jpg文件，排除preview_*.jpg和其他特殊文件
+		basename := filepath.Base(object.Key)
+		if filepath.Ext(object.Key) == ".jpg" && 
+		   len(basename) > 8 && 
+		   basename[:8] != "preview_" &&
+		   basename != ".keep" {
+			objects = append(objects, objectInfo{
+				key:     object.Key,
+				lastMod: object.LastModified,
+			})
+		}
+	}
+	
+	// 如果数量未超限，无需清理
+	if len(objects) <= maxCount {
+		return nil
+	}
+	
+	// 按时间排序（从旧到新）
+	// 使用简单的冒泡排序
+	for i := 0; i < len(objects)-1; i++ {
+		for j := 0; j < len(objects)-i-1; j++ {
+			if objects[j].lastMod.After(objects[j+1].lastMod) {
+				objects[j], objects[j+1] = objects[j+1], objects[j]
+			}
+		}
+	}
+	
+	// 删除最旧的图片（保留最新的maxCount张）
+	deleteCount := len(objects) - maxCount
+	deletedCount := 0
+	
+	for i := 0; i < deleteCount; i++ {
+		deleteCtx, deleteCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := s.minio.client.RemoveObject(deleteCtx, s.minio.bucket, objects[i].key, minio.RemoveObjectOptions{})
+		deleteCancel()
+		
+		if err != nil {
+			s.log.Warn("failed to delete old frame", 
+				slog.String("task", task.ID),
+				slog.String("key", objects[i].key),
+				slog.String("err", err.Error()))
+		} else {
+			deletedCount++
+			s.log.Debug("deleted old frame", 
+				slog.String("task", task.ID),
+				slog.String("key", objects[i].key))
+		}
+	}
+	
+	if deletedCount > 0 {
+		s.log.Info("cleaned up old frames", 
+			slog.String("task", task.ID),
+			slog.Int("deleted", deletedCount),
+			slog.Int("remaining", len(objects)-deletedCount),
+			slog.Int("limit", maxCount))
+	}
+	
+	return nil
+}
+
+// getMaxFrameCount 获取任务的最大图片数量限制
+// 优先使用任务级配置，如果为0则使用全局配置
+func getMaxFrameCount(task conf.FrameExtractTask, cfg *conf.FrameExtractorConfig) int {
+	if task.MaxFrameCount > 0 {
+		return task.MaxFrameCount
+	}
+	return cfg.MaxFrameCount
+}
+
+// shouldCleanup 判断是否应该触发清理（限流控制）
+// 规则：每上传50张图片或距离上次清理超过5分钟时触发清理
+func (s *Service) shouldCleanup(taskID string) bool {
+	s.cleanupMu.Lock()
+	defer s.cleanupMu.Unlock()
+	
+	counter, exists := s.cleanupCounters[taskID]
+	if !exists {
+		counter = &cleanupCounter{
+			uploadCount: 0,
+			lastCleanup: time.Time{},
+		}
+		s.cleanupCounters[taskID] = counter
+	}
+	
+	counter.uploadCount++
+	
+	// 每50张图片触发一次清理
+	const cleanupThreshold = 50
+	// 或者距离上次清理超过5分钟
+	const cleanupInterval = 5 * time.Minute
+	
+	now := time.Now()
+	if counter.uploadCount >= cleanupThreshold || 
+	   (counter.lastCleanup.IsZero() == false && now.Sub(counter.lastCleanup) >= cleanupInterval) {
+		counter.uploadCount = 0
+		counter.lastCleanup = now
+		return true
+	}
+	
+	return false
+}

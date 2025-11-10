@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>测试算法配置回显</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .result { margin: 20px 0; padding: 15px; background: #f5f5f5; border-radius: 4px; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; border: 1px solid #f5c6cb; }
+        pre { background: #fff; padding: 10px; border-radius: 4px; overflow-x: auto; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>🔍 算法配置回显功能测试</h1>
+    
+    <div>
+        <h2>测试任务</h2>
+        <button onclick="testConfig('测试1')">测试任务1的配置</button>
+        <button onclick="testConfig('测试2')">测试任务2的配置</button>
+        <button onclick="testConfig('测试3')">测试任务3的配置</button>
+        <button onclick="testConfig('测试4')">测试任务4的配置</button>
+        <button onclick="testConfig('测试5')">测试任务5的配置</button>
+    </div>
+    
+    <div id="result"></div>
+
+    <script>
+        async function testConfig(taskId) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '<div class="result">正在加载...</div>';
+            
+            try {
+                // 调用API获取配置
+                const response = await fetch(`/api/v1/frame_extractor/tasks/${taskId}/config`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const config = await response.json();
+                
+                // 显示结果
+                resultDiv.innerHTML = `
+                    <div class="result success">
+                        <h3>✅ 配置加载成功：${taskId}</h3>
+                        <p><strong>配置版本</strong>: ${config.config_version || '未知'}</p>
+                        <p><strong>任务类型</strong>: ${config.task_type || '未知'}</p>
+                        <p><strong>区域数量</strong>: ${config.regions ? config.regions.length : 0} 个</p>
+                        <p><strong>坐标类型</strong>: ${config.coordinate_type || '未知'}</p>
+                        <p><strong>置信度阈值</strong>: ${config.algorithm_params?.confidence_threshold || 'N/A'}</p>
+                        <p><strong>IOU阈值</strong>: ${config.algorithm_params?.iou_threshold || 'N/A'}</p>
+                        
+                        <h4>区域详情</h4>
+                        <pre>${JSON.stringify(config.regions, null, 2)}</pre>
+                        
+                        <h4>完整配置</h4>
+                        <pre>${JSON.stringify(config, null, 2)}</pre>
+                    </div>
+                `;
+                
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <h3>❌ 加载配置失败：${taskId}</h3>
+                        <p><strong>错误信息</strong>: ${error.message}</p>
+                        <p><strong>可能原因</strong>:</p>
+                        <ul>
+                            <li>该任务还没有配置算法</li>
+                            <li>MinIO中没有配置文件</li>
+                            <li>网络连接问题</li>
+                        </ul>
+                    </div>
+                `;
+            }
+        }
+    </script>
+</body>
+</html>
+

@@ -298,6 +298,8 @@ type FrameExtractorConfig struct {
     Store        string `json:"store" mapstructure:"store"`
     // 任务类型列表，用于智能分析分类
     TaskTypes    []string `json:"task_types" mapstructure:"task_types"`
+    // 全局默认最大抽帧图片数量（0表示不限制），可被任务级覆盖
+    MaxFrameCount int `json:"max_frame_count" mapstructure:"max_frame_count"`
     // MinIO 配置（仅当 store==minio 时生效）
     MinIO MinIOConfig `json:"minio" mapstructure:"minio"`
     // 任务清单（可选），未配置时仅启用模块等待 API 下发
@@ -322,6 +324,7 @@ type FrameExtractTask struct {
     Enabled      bool   `json:"enabled" mapstructure:"enabled"` // task running state
     ConfigStatus string `json:"config_status" mapstructure:"config_status"` // 配置状态: "unconfigured" | "configured"
     PreviewImage string `json:"preview_image" mapstructure:"preview_image"` // 预览图片路径
+    MaxFrameCount int   `json:"max_frame_count" mapstructure:"max_frame_count"` // 最大抽帧图片数量（0表示使用全局配置）
 }
 type RecordConfig struct {
 	EnableFlv            bool   `json:"enable_flv"`
@@ -448,17 +451,36 @@ type AIAnalysisConfig struct {
 	
 	// 存储路径配置
 	AlertBasePath string `json:"alert_base_path" mapstructure:"alert_base_path"` // 告警图片存储路径前缀，默认: alerts/
+	
+	// 批量写入配置
+	AlertBatchEnabled     bool `json:"alert_batch_enabled" mapstructure:"alert_batch_enabled"`           // 是否启用批量写入，默认: true
+	AlertBatchSize        int  `json:"alert_batch_size" mapstructure:"alert_batch_size"`                 // 批量写入大小，达到此数量触发写入，默认: 100
+	AlertBatchIntervalSec int  `json:"alert_batch_interval_sec" mapstructure:"alert_batch_interval_sec"` // 批量写入刷新间隔（秒），默认: 2
 }
 
 // AlgorithmService 算法服务注册信息
 type AlgorithmService struct {
-	ServiceID   string   `json:"service_id"`   // 服务唯一ID
-	Name        string   `json:"name"`         // 服务名称
-	TaskTypes   []string `json:"task_types"`   // 支持的任务类型
-	Endpoint    string   `json:"endpoint"`     // 推理HTTP端点
-	Version     string   `json:"version"`      // 版本号
-	RegisterAt  int64    `json:"register_at"`  // 注册时间戳
-	LastHeartbeat int64  `json:"last_heartbeat"` // 最后心跳时间戳
+	ServiceID             string   `json:"service_id"`               // 服务唯一ID
+	Name                  string   `json:"name"`                     // 服务名称
+	TaskTypes             []string `json:"task_types"`               // 支持的任务类型
+	Endpoint              string   `json:"endpoint"`                 // 推理HTTP端点
+	Version               string   `json:"version"`                  // 版本号
+	RegisterAt            int64    `json:"register_at"`              // 注册时间戳
+	LastHeartbeat         int64    `json:"last_heartbeat"`           // 最后心跳时间戳
+	
+	// 性能统计（由心跳更新）
+	TotalRequests         int64   `json:"total_requests"`            // 累积推理次数
+	AvgInferenceTimeMs    float64 `json:"avg_inference_time_ms"`     // 平均推理时间（毫秒）
+	LastInferenceTimeMs   float64 `json:"last_inference_time_ms"`    // 最近一次推理时间（毫秒）
+	LastTotalTimeMs       float64 `json:"last_total_time_ms"`        // 最近一次总耗时（毫秒）
+}
+
+// HeartbeatRequest 心跳请求（可选携带统计数据）
+type HeartbeatRequest struct {
+	TotalRequests       int64   `json:"total_requests"`            // 累积推理次数
+	AvgInferenceTimeMs  float64 `json:"avg_inference_time_ms"`     // 平均推理时间（毫秒）
+	LastInferenceTimeMs float64 `json:"last_inference_time_ms"`    // 最近一次推理时间（毫秒）
+	LastTotalTimeMs     float64 `json:"last_total_time_ms"`        // 最近一次总耗时（毫秒）
 }
 
 // InferenceRequest 推理请求
@@ -476,6 +498,6 @@ type InferenceResponse struct {
 	Success         bool        `json:"success"`
 	Result          interface{} `json:"result"` // 推理结果（JSON）
 	Confidence      float64     `json:"confidence"`
-	InferenceTimeMs int         `json:"inference_time_ms"`
+	InferenceTimeMs float64     `json:"inference_time_ms"` // 改为float64，兼容算法服务返回的浮点数
 	Error           string      `json:"error,omitempty"`
 }

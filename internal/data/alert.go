@@ -2,6 +2,9 @@ package data
 
 import (
 	"easydarwin/internal/data/model"
+	"log/slog"
+	"sync"
+	"time"
 )
 
 // CreateAlert 创建告警记录
@@ -110,5 +113,156 @@ func GetDistinctTaskIDs() ([]string, error) {
 // AutoMigrate 自动迁移alert表
 func MigrateAlertTable() error {
 	return GetDatabase().AutoMigrate(&model.Alert{})
+}
+
+// AlertBatchWriter 批量写入告警记录
+type AlertBatchWriter struct {
+	buffer    []*model.Alert
+	mu        sync.Mutex
+	batchSize int
+	interval  time.Duration
+	stopCh    chan struct{}
+	wg        sync.WaitGroup
+	log       *slog.Logger
+	enabled   bool
+}
+
+// NewAlertBatchWriter 创建批量写入器
+func NewAlertBatchWriter(batchSize int, intervalSec int, enabled bool, logger *slog.Logger) *AlertBatchWriter {
+	if batchSize <= 0 {
+		batchSize = 100
+	}
+	if intervalSec <= 0 {
+		intervalSec = 2
+	}
+	
+	return &AlertBatchWriter{
+		buffer:    make([]*model.Alert, 0, batchSize),
+		batchSize: batchSize,
+		interval:  time.Duration(intervalSec) * time.Second,
+		stopCh:    make(chan struct{}),
+		log:       logger,
+		enabled:   enabled,
+	}
+}
+
+// Start 启动批量写入器
+func (w *AlertBatchWriter) Start() {
+	if !w.enabled {
+		w.log.Info("alert batch writer is disabled, using direct write mode")
+		return
+	}
+	
+	w.wg.Add(1)
+	go w.flushLoop()
+	w.log.Info("alert batch writer started",
+		slog.Int("batch_size", w.batchSize),
+		slog.Duration("interval", w.interval))
+}
+
+// Stop 停止批量写入器并刷新剩余数据
+func (w *AlertBatchWriter) Stop() {
+	if !w.enabled {
+		return
+	}
+	
+	close(w.stopCh)
+	w.wg.Wait()
+	
+	// 最后刷新一次
+	w.flush()
+	w.log.Info("alert batch writer stopped")
+}
+
+// Add 添加告警到批量队列
+func (w *AlertBatchWriter) Add(alert *model.Alert) error {
+	if !w.enabled {
+		// 批量写入未启用，直接写入
+		return CreateAlert(alert)
+	}
+	
+	w.mu.Lock()
+	w.buffer = append(w.buffer, alert)
+	needFlush := len(w.buffer) >= w.batchSize
+	w.mu.Unlock()
+	
+	// 达到批量大小，立即刷新
+	if needFlush {
+		w.flush()
+	}
+	
+	return nil
+}
+
+// flushLoop 定时刷新循环
+func (w *AlertBatchWriter) flushLoop() {
+	defer w.wg.Done()
+	
+	ticker := time.NewTicker(w.interval)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-ticker.C:
+			w.flush()
+		case <-w.stopCh:
+			return
+		}
+	}
+}
+
+// flush 批量写入数据库
+func (w *AlertBatchWriter) flush() {
+	w.mu.Lock()
+	if len(w.buffer) == 0 {
+		w.mu.Unlock()
+		return
+	}
+	
+	// 复制缓冲区并清空
+	toFlush := make([]*model.Alert, len(w.buffer))
+	copy(toFlush, w.buffer)
+	w.buffer = w.buffer[:0]
+	w.mu.Unlock()
+	
+	// 批量插入
+	startTime := time.Now()
+	err := GetDatabase().CreateInBatches(toFlush, len(toFlush)).Error
+	duration := time.Since(startTime)
+	
+	if err != nil {
+		w.log.Error("failed to batch insert alerts",
+			slog.Int("count", len(toFlush)),
+			slog.Duration("duration", duration),
+			slog.String("err", err.Error()))
+		
+		// 失败时尝试逐条插入（降级处理）
+		w.log.Info("trying to insert alerts one by one as fallback")
+		successCount := 0
+		for _, alert := range toFlush {
+			if err := CreateAlert(alert); err == nil {
+				successCount++
+			}
+		}
+		w.log.Info("fallback insert completed",
+			slog.Int("success", successCount),
+			slog.Int("failed", len(toFlush)-successCount))
+	} else {
+		w.log.Info("batch insert alerts succeeded",
+			slog.Int("count", len(toFlush)),
+			slog.Duration("duration", duration),
+			slog.Float64("avg_ms_per_alert", float64(duration.Milliseconds())/float64(len(toFlush))))
+	}
+}
+
+// GetQueueSize 获取当前队列大小
+func (w *AlertBatchWriter) GetQueueSize() int {
+	if !w.enabled {
+		return 0
+	}
+	
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.buffer)
 }
 

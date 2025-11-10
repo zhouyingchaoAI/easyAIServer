@@ -140,6 +140,73 @@
         </a-row>
       </a-card>
 
+      <!-- 负载均衡监控 -->
+      <a-card title="负载均衡策略" size="small" class="mb-4" v-if="Object.keys(loadBalanceInfo).length > 0">
+        <template #extra>
+          <a-tag color="processing">加权轮询（WRR）</a-tag>
+        </template>
+        
+        <div v-for="(info, taskType) in loadBalanceInfo" :key="taskType" class="mb-4">
+          <a-divider orientation="left">
+            <a-tag color="purple">{{ taskType }}</a-tag>
+            <span style="margin-left: 8px; font-size: 14px; color: #666;">
+              {{ info.total_services }} 个服务 | 总权重: {{ info.total_weight }}
+            </span>
+          </a-divider>
+          
+          <a-table 
+            :data-source="info.services" 
+            :columns="loadBalanceColumns" 
+            :pagination="false"
+            size="small"
+            :scroll="{ x: 900 }"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'endpoint'">
+                <a-tooltip :title="record.endpoint">
+                  <span style="font-size: 12px;">{{ record.endpoint.split('://')[1] || record.endpoint }}</span>
+                </a-tooltip>
+              </template>
+              <template v-else-if="column.key === 'avg_response_ms'">
+                <a-tag v-if="record.has_data" :color="getResponseTimeColor(record.avg_response_ms)">
+                  {{ record.avg_response_ms }}ms
+                </a-tag>
+                <span v-else style="color: #999; font-size: 12px;">收集中...</span>
+              </template>
+              <template v-else-if="column.key === 'weight'">
+                <a-tag color="blue">{{ record.weight }}</a-tag>
+              </template>
+              <template v-else-if="column.key === 'allocation_ratio'">
+                <a-progress
+                  :percent="record.allocation_ratio"
+                  :show-info="true"
+                  :format="percent => `${percent.toFixed(1)}%`"
+                  :stroke-color="getAllocationColor(record.allocation_ratio)"
+                  size="small"
+                  style="width: 150px;"
+                />
+              </template>
+              <template v-else-if="column.key === 'call_count'">
+                <a-tag color="cyan">{{ record.call_count || 0 }}</a-tag>
+              </template>
+            </template>
+          </a-table>
+          
+          <!-- 权重说明 -->
+          <a-alert 
+            v-if="info.services.some(s => s.has_data)"
+            type="info" 
+            show-icon 
+            class="mt-2"
+            style="font-size: 12px;"
+          >
+            <template #message>
+              <span>权重计算：weight = 1000 / 响应时间(ms)，权重越高分配比例越大。最小权重1（保证每个服务都有请求），最大权重100。</span>
+            </template>
+          </a-alert>
+        </div>
+      </a-card>
+
       <!-- AI推理队列监控 -->
       <a-card title="AI推理队列" size="small" class="mb-4">
         <a-row :gutter="16" class="mb-3">
@@ -306,6 +373,7 @@ import request from '@/api/request'
 const loading = ref(false)
 const autoRefresh = ref(true)
 const refreshInterval = ref(3000)
+const loadBalanceInfo = ref({})
 let timer = null
 
 const stats = ref({
@@ -348,6 +416,15 @@ const columns = [
   { title: '运行时长', key: 'uptime', width: 120 },
 ]
 
+const loadBalanceColumns = [
+  { title: '端点', key: 'endpoint', width: 250, ellipsis: true },
+  { title: '服务ID', key: 'service_id', width: 180 },
+  { title: '平均响应', key: 'avg_response_ms', width: 100, align: 'center' },
+  { title: '权重', key: 'weight', width: 80, align: 'center' },
+  { title: '分配比例', key: 'allocation_ratio', width: 180 },
+  { title: '调用次数', key: 'call_count', width: 100, align: 'center' },
+]
+
 const fetchStats = async () => {
   loading.value = true
   try {
@@ -376,6 +453,17 @@ const fetchStats = async () => {
     } catch (inferenceError) {
       console.warn('inference stats not available:', inferenceError)
       // AI推理可能未启用，不影响主要功能
+    }
+    
+    // 获取负载均衡信息
+    try {
+      const loadBalanceResponse = await request({ url: '/ai_analysis/load_balance/info', method: 'get' })
+      if (loadBalanceResponse.data && loadBalanceResponse.data.load_balance) {
+        loadBalanceInfo.value = loadBalanceResponse.data.load_balance
+      }
+    } catch (loadBalanceError) {
+      console.warn('load balance info not available:', loadBalanceError)
+      // 负载均衡信息可能暂无数据
     }
   } catch (e) {
     console.error('fetch stats failed', e)
@@ -516,6 +604,22 @@ const formatUptime = (seconds) => {
   } else {
     return `${secs}s`
   }
+}
+
+// 根据响应时间获取颜色
+const getResponseTimeColor = (ms) => {
+  if (ms < 50) return 'green'
+  if (ms < 100) return 'blue'
+  if (ms < 200) return 'orange'
+  return 'red'
+}
+
+// 根据分配比例获取颜色
+const getAllocationColor = (ratio) => {
+  if (ratio > 40) return '#52c41a'  // 绿色 - 高分配
+  if (ratio > 20) return '#1890ff'  // 蓝色 - 中等分配
+  if (ratio > 10) return '#faad14'  // 橙色 - 低分配
+  return '#ff4d4f'                  // 红色 - 很少分配
 }
 
 watch([autoRefresh, refreshInterval], () => {

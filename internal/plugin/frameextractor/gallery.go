@@ -65,7 +65,7 @@ func (s *Service) listLocalSnapshots(taskID string) ([]SnapshotInfo, error) {
 	if taskType == "" {
 		taskType = "未分类"
 	}
-	dir := filepath.Join(baseDir, taskType, task.OutputPath)
+	dir := filepath.Join(baseDir, taskType, task.ID)
 	
 	s.log.Debug("listing snapshots", 
 		slog.String("task", taskID),
@@ -150,7 +150,7 @@ func (s *Service) listMinioSnapshots(taskID string) ([]SnapshotInfo, error) {
 	}
 	
 	// use forward slashes for S3/MinIO
-	prefix := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.OutputPath)) + "/"
+	prefix := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.ID)) + "/"
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	

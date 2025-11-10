@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -18,7 +19,7 @@ func main() {
 	useSSL := false
 
 	fmt.Println("========================================")
-	fmt.Println("MinIO Go SDK 测试")
+	fmt.Println("MinIO Go SDK 测试 (修复后)")
 	fmt.Println("========================================")
 	fmt.Printf("\n配置:\n")
 	fmt.Printf("  Endpoint: %s\n", endpoint)
@@ -26,16 +27,28 @@ func main() {
 	fmt.Printf("  SSL: %v\n", useSSL)
 	fmt.Println()
 
-	// 创建MinIO客户端
+	// 配置自定义 Transport 以解决 502 错误
+	transport := &http.Transport{
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		DisableCompression:    false,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
+	// 创建MinIO客户端（使用修复后的配置）
 	fmt.Println("1. 创建MinIO客户端...")
 	client, err := minio.New(endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
-		Secure: useSSL,
+		Creds:     credentials.NewStaticV4(accessKey, secretKey, ""),
+		Secure:    useSSL,
+		Transport: transport,
+		Region:    "",
 	})
 	if err != nil {
 		log.Fatalf("❌ 创建客户端失败: %v\n", err)
 	}
-	fmt.Println("   ✅ 客户端创建成功")
+	fmt.Println("   ✅ 客户端创建成功（使用自定义 Transport）")
 
 	// 测试BucketExists
 	fmt.Println("\n2. 测试BucketExists...")

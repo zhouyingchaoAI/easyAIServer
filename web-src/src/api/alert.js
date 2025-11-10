@@ -49,6 +49,14 @@ export default {
       url: '/alerts/task_ids',
       method: 'get'
     });
+  },
+  
+  // 获取负载均衡信息
+  getLoadBalanceInfo(){
+    return request({
+      url: '/ai_analysis/load_balance/info',
+      method: 'get'
+    });
   }
 }
 

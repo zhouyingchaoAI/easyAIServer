@@ -22,24 +22,26 @@ type ImageInfo struct {
 
 // Scanner MinIO图片扫描器
 type Scanner struct {
-	minio     *minio.Client
-	bucket    string
-	basePath  string
-	processed map[string]time.Time // 已处理图片 path -> 处理时间
-	mu        sync.RWMutex
-	log       *slog.Logger
-	stopScan  chan struct{}
+	minio        *minio.Client
+	bucket       string
+	basePath     string
+	alertBasePath string // 告警图片路径前缀
+	processed    map[string]time.Time // 已处理图片 path -> 处理时间
+	mu           sync.RWMutex
+	log          *slog.Logger
+	stopScan     chan struct{}
 }
 
 // NewScanner 创建扫描器
-func NewScanner(minioClient *minio.Client, bucket, basePath string, logger *slog.Logger) *Scanner {
+func NewScanner(minioClient *minio.Client, bucket, basePath, alertBasePath string, logger *slog.Logger) *Scanner {
 	return &Scanner{
-		minio:     minioClient,
-		bucket:    bucket,
-		basePath:  basePath,
-		processed: make(map[string]time.Time),
-		log:       logger,
-		stopScan:  make(chan struct{}),
+		minio:         minioClient,
+		bucket:        bucket,
+		basePath:      basePath,
+		alertBasePath: alertBasePath,
+		processed:     make(map[string]time.Time),
+		log:           logger,
+		stopScan:      make(chan struct{}),
 	}
 }
 
@@ -120,6 +122,12 @@ func (s *Scanner) scanNewImages() ([]ImageInfo, error) {
 		if strings.HasSuffix(object.Key, "algo_config.json") || strings.HasSuffix(object.Key, ".json") {
 			continue
 		}
+		
+		// 跳过告警路径中的图片（已经推理过了）
+		if s.alertBasePath != "" && strings.HasPrefix(object.Key, s.alertBasePath) {
+			s.log.Debug("skipping alert image", slog.String("path", object.Key))
+			continue
+		}
 
 		// 检查是否已处理
 		if s.isProcessed(object.Key) {
@@ -129,8 +137,17 @@ func (s *Scanner) scanNewImages() ([]ImageInfo, error) {
 		// 解析路径：任务类型/任务ID/文件名
 		taskType, taskID, filename := parseImagePath(object.Key, s.basePath)
 		if taskType == "" || taskID == "" {
+			s.log.Debug("skipping image with invalid path structure",
+				slog.String("path", object.Key),
+				slog.String("base_path", s.basePath))
 			continue
 		}
+
+		s.log.Debug("parsed image path",
+			slog.String("full_path", object.Key),
+			slog.String("task_type", taskType),
+			slog.String("task_id", taskID),
+			slog.String("filename", filename))
 
 		newImages = append(newImages, ImageInfo{
 			Path:     object.Key,

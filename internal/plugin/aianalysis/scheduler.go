@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -27,13 +28,18 @@ type Scheduler struct {
 	alertBasePath         string // 告警图片存储路径前缀
 	mq                    MessageQueue
 	log                   *slog.Logger
-	semaphore             chan struct{} // 限制并发数
-	saveOnlyWithDetection bool          // 只保存有检测结果的告警
-	httpClient            *http.Client  // 优化的HTTP客户端
+	semaphore             chan struct{}          // 限制并发数
+	saveOnlyWithDetection bool                   // 只保存有检测结果的告警
+	httpClient            *http.Client           // 优化的HTTP客户端
+	alertBatchWriter      *data.AlertBatchWriter // 批量写入告警
+	
+	// 移动锁：确保同一task_id的图片按顺序移动，避免并发错位
+	moveLocks  map[string]*sync.Mutex
+	moveLockMu sync.Mutex
 }
 
 // NewScheduler 创建调度器
-func NewScheduler(registry *AlgorithmRegistry, minioClient *minio.Client, bucket, alertBasePath string, mq MessageQueue, maxConcurrent int, saveOnlyWithDetection bool, logger *slog.Logger) *Scheduler {
+func NewScheduler(registry *AlgorithmRegistry, minioClient *minio.Client, bucket, alertBasePath string, mq MessageQueue, maxConcurrent int, saveOnlyWithDetection bool, alertBatchWriter *data.AlertBatchWriter, logger *slog.Logger) *Scheduler {
 	if maxConcurrent <= 0 {
 		maxConcurrent = 5
 	}
@@ -63,6 +69,8 @@ func NewScheduler(registry *AlgorithmRegistry, minioClient *minio.Client, bucket
 		semaphore:             make(chan struct{}, maxConcurrent),
 		saveOnlyWithDetection: saveOnlyWithDetection,
 		httpClient:            httpClient,
+		alertBatchWriter:      alertBatchWriter,
+		moveLocks:             make(map[string]*sync.Mutex),
 	}
 }
 
@@ -200,10 +208,16 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 	// 调用算法服务
 	resp, err := s.callAlgorithm(algorithm, req)
 	if err != nil {
+		// ❌ 推理调用失败，记录日志（不注销服务，服务状态由心跳管理）
+		s.registry.RecordInferenceFailure(algorithm.Endpoint, algorithm.ServiceID)
+		
 		s.log.Error("algorithm inference failed",
 			slog.String("algorithm", algorithm.ServiceID),
+			slog.String("endpoint", algorithm.Endpoint),
 			slog.String("image", image.Path),
-			slog.String("err", err.Error()))
+			slog.String("err", err.Error()),
+			slog.String("note", "service will be removed by heartbeat timeout if truly offline"))
+		
 		// 推理失败，删除图片（避免积压，图片已尝试推理过）
 		if delErr := s.deleteImageWithReason(image.Path, "inference_call_failed"); delErr != nil {
 			s.log.Error("failed to delete image after inference failure",
@@ -229,6 +243,19 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 		s.deleteImageWithReason(image.Path, "inference_failed")
 		return
 	}
+
+	// ✅ 推理成功，记录成功（增加调用计数，记录响应时间）
+	// 使用算法服务返回的推理时间，如果为0则使用实际测量的时间
+	reportedTimeMs := int64(resp.InferenceTimeMs)
+	if reportedTimeMs <= 0 {
+		reportedTimeMs = actualInferenceTime
+	}
+	s.registry.RecordInferenceSuccess(algorithm.Endpoint, reportedTimeMs)
+	s.log.Debug("inference succeeded, call count incremented and response time recorded",
+		slog.String("endpoint", algorithm.Endpoint),
+		slog.String("service_id", algorithm.ServiceID),
+		slog.Int64("response_time_ms", reportedTimeMs),
+		slog.Int64("actual_time_ms", actualInferenceTime))
 
 	// 提取检测个数
 	detectionCount := extractDetectionCount(resp.Result)
@@ -263,47 +290,60 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
         return
     }
 	
-	// 有检测结果，将图片移动到告警路径
+	// 有检测结果，准备告警图片路径
 	var alertImagePath string
 	var alertImageURL string
 	
     if s.alertBasePath != "" && detectionCount > 0 {
-		// 移动图片到告警路径（移动完成后原文件会被删除）
-		movedPath, err := s.moveImageToAlertPath(image.Path, image.TaskType, image.TaskID)
-		if err != nil {
-			s.log.Error("failed to move image to alert path",
-				slog.String("src", image.Path),
-				slog.String("err", err.Error()))
-			// 移动失败，尝试直接删除原文件（避免积压）
-			if delErr := s.deleteImageWithReason(image.Path, "move_failed"); delErr != nil {
-				s.log.Error("failed to delete image after move failure",
-					slog.String("path", image.Path),
-					slog.String("err", delErr.Error()))
-			}
-			// 移动失败，使用原路径（但原文件已删除，路径可能无效）
-			alertImagePath = image.Path
-		} else {
-			alertImagePath = movedPath
-			// 移动成功，原文件已在moveImageToAlertPath中删除
-		}
+		// 构建目标告警路径（保存告警时使用目标路径）
+		// 使用 ImageInfo 中已解析的 Filename，避免重复解析导致混淆
+		targetAlertPath := fmt.Sprintf("%s%s/%s/%s", s.alertBasePath, image.TaskType, image.TaskID, image.Filename)
 		
-		// 为告警图片生成新的预签名URL
-		if alertImagePath != "" {
-			alertURLCtx, alertURLCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer alertURLCancel()
+		s.log.Info("constructing alert image path",
+			slog.String("task_id", image.TaskID),
+			slog.String("task_type", image.TaskType),
+			slog.String("filename", image.Filename),
+			slog.String("src_path", image.Path),
+			slog.String("target_path", targetAlertPath))
+		
+		// 使用目标告警路径保存（确保URL可以访问）
+		alertImagePath = targetAlertPath
+		// 不预先生成URL，节省时间（API返回时按需生成）
+		alertImageURL = ""
+		
+		// 在后台异步执行图片移动
+		// 注意：传递所有必要的参数到闭包，避免并发问题
+		// 使用移动锁确保同一task_id的图片按顺序移动，避免内容错位
+		go func(srcPath, dstPath, taskID, taskType, filename string) {
+			// 获取该task_id的移动锁，确保顺序移动
+			lock := s.getMoveLock(taskID)
+			lock.Lock()
+			defer lock.Unlock()
 			
-			presignedAlertURL, err := s.minio.PresignedGetObject(alertURLCtx, s.bucket, alertImagePath, 24*time.Hour, nil)
-			if err == nil {
-				alertImageURL = presignedAlertURL.String()
+			if err := s.moveImageToAlertPathAsync(srcPath, dstPath); err != nil {
+				s.log.Error("async image move failed",
+					slog.String("task_id", taskID),
+					slog.String("task_type", taskType),
+					slog.String("filename", filename),
+					slog.String("src", srcPath),
+					slog.String("dst", dstPath),
+					slog.String("err", err.Error()))
+				// 移动失败不影响告警，原路径图片仍然可用
+			} else {
+				s.log.Info("async image move succeeded",
+					slog.String("task_id", taskID),
+					slog.String("task_type", taskType),
+					slog.String("filename", filename),
+					slog.String("src", srcPath),
+					slog.String("dst", dstPath))
 			}
-		}
-	} else {
-		// 未配置告警路径，使用原路径，但推理完成后需要删除原文件
-		alertImagePath = image.Path
-		alertImageURL = presignedURL.String()
+		}(image.Path, targetAlertPath, image.TaskID, image.TaskType, image.Filename)
 		
-		// 保存告警后删除原文件
-		// 注意：这里先保存告警，然后再删除原文件
+	} else {
+		// 未配置告警路径，使用原路径
+		alertImagePath = image.Path
+		// 不预先生成URL，节省时间（API返回时按需生成）
+		alertImageURL = ""
 	}
 	
 	// 保存告警到数据库
@@ -321,22 +361,44 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 		InferenceTimeMs: int(actualInferenceTime),
 		CreatedAt:       time.Now(),
 	}
+	
+	// 验证任务ID与图片路径的一致性
+	if strings.Contains(alertImagePath, "/") {
+		pathParts := strings.Split(alertImagePath, "/")
+		if len(pathParts) >= 3 {
+			pathTaskID := pathParts[len(pathParts)-2] // 倒数第二个部分应该是task_id
+			if pathTaskID != image.TaskID {
+				s.log.Error("task_id mismatch detected!",
+					slog.String("alert_task_id", image.TaskID),
+					slog.String("path_task_id", pathTaskID),
+					slog.String("image_path", alertImagePath),
+					slog.String("original_path", image.Path))
+			}
+		}
+	}
 
-	if err := data.CreateAlert(alert); err != nil {
-		s.log.Error("failed to save alert",
+	// 使用批量写入器添加告警
+	if err := s.alertBatchWriter.Add(alert); err != nil {
+		s.log.Error("failed to add alert to batch writer",
 			slog.String("task_id", image.TaskID),
 			slog.String("err", err.Error()))
 		return
 	}
+	
+	s.log.Debug("alert record prepared for batch save",
+		slog.String("task_id", alert.TaskID),
+		slog.String("task_type", alert.TaskType),
+		slog.String("image_path", alert.ImagePath),
+		slog.String("original_path", image.Path))
 
-	s.log.Info("inference completed and saved",
+	s.log.Info("inference completed and queued for batch save",
 		slog.String("algorithm", algorithm.ServiceID),
 		slog.String("task_id", image.TaskID),
 		slog.String("task_type", image.TaskType),
 		slog.Int("detection_count", detectionCount),
-		slog.Uint64("alert_id", uint64(alert.ID)),
 		slog.Float64("confidence", resp.Confidence),
-		slog.Int64("inference_time_ms", actualInferenceTime))
+		slog.Int64("inference_time_ms", actualInferenceTime),
+		slog.Int("batch_queue_size", s.alertBatchWriter.GetQueueSize()))
 
 	// 推送到消息队列
 	if s.mq != nil {
@@ -545,7 +607,7 @@ func (s *Scheduler) deleteImageWithReason(imagePath, reason string) error {
 	return nil
 }
 
-// moveImageToAlertPath 将图片移动到告警路径
+// moveImageToAlertPath 将图片移动到告警路径（同步版本，已废弃）
 func (s *Scheduler) moveImageToAlertPath(imagePath, taskType, taskID string) (string, error) {
 	// 解析原文件名
 	parts := strings.Split(imagePath, "/")
@@ -557,47 +619,103 @@ func (s *Scheduler) moveImageToAlertPath(imagePath, taskType, taskID string) (st
 	// 构建告警路径：alerts/{task_type}/{task_id}/filename
 	alertPath := fmt.Sprintf("%s%s/%s/%s", s.alertBasePath, taskType, taskID, filename)
 	
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	return alertPath, s.moveImageToAlertPathAsync(imagePath, alertPath)
+}
+
+// moveImageToAlertPathAsync 异步移动图片到告警路径（带重试）
+func (s *Scheduler) moveImageToAlertPathAsync(srcPath, dstPath string) error {
+	// 重试配置
+	maxRetries := 3
+	retryDelay := 500 * time.Millisecond
+	
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			s.log.Debug("retrying image move",
+				slog.Int("attempt", attempt+1),
+				slog.String("src", srcPath),
+				slog.String("dst", dstPath))
+			time.Sleep(retryDelay)
+			retryDelay *= 2 // 指数退避
+		}
+		
+		// 执行移动操作
+		if err := s.moveImageToAlertPathInternal(srcPath, dstPath); err != nil {
+			lastErr = err
+			continue
+		}
+		
+		// 成功
+		return nil
+	}
+	
+	// 所有重试都失败
+	return fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
+}
+
+// moveImageToAlertPathInternal 内部移动操作
+func (s *Scheduler) moveImageToAlertPathInternal(srcPath, dstPath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	
 	// 复制对象到新路径
 	src := minio.CopySrcOptions{
 		Bucket: s.bucket,
-		Object: imagePath,
+		Object: srcPath,
 	}
 	dst := minio.CopyDestOptions{
 		Bucket: s.bucket,
-		Object: alertPath,
+		Object: dstPath,
 	}
 	
 	_, err := s.minio.CopyObject(ctx, dst, src)
 	if err != nil {
-		s.log.Error("failed to copy image to alert path",
-			slog.String("src", imagePath),
-			slog.String("dst", alertPath),
-			slog.String("err", err.Error()))
-		return "", fmt.Errorf("copy object failed: %w", err)
+		return fmt.Errorf("copy object failed: %w", err)
 	}
 	
 	// 删除原文件（等待复制完成后再删除）
-	if err := s.minio.RemoveObject(ctx, s.bucket, imagePath, minio.RemoveObjectOptions{}); err != nil {
-		s.log.Error("failed to remove original image after move",
-			slog.String("path", imagePath),
-			slog.String("alert_path", alertPath),
+	if err := s.minio.RemoveObject(ctx, s.bucket, srcPath, minio.RemoveObjectOptions{}); err != nil {
+		// 复制成功但删除失败，不返回错误（原文件留着也无妨）
+		s.log.Warn("failed to remove original image after copy (not critical)",
+			slog.String("path", srcPath),
 			slog.String("err", err.Error()))
-		// 删除失败，返回错误，调用方需要处理
-		return "", fmt.Errorf("failed to remove original image: %w", err)
 	}
 	
-	s.log.Info("image moved to alert path and original deleted",
-		slog.String("src", imagePath),
-		slog.String("dst", alertPath))
-	
-	return alertPath, nil
+	return nil
 }
 
 // getFrameExtractorService 获取抽帧服务实例
 func (s *Scheduler) getFrameExtractorService() *frameextractor.Service {
 	return frameextractor.GetGlobal()
+}
+
+// generatePresignedURL 生成图片的预签名URL
+func (s *Scheduler) generatePresignedURL(imagePath string) (string, error) {
+	if imagePath == "" {
+		return "", nil
+	}
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	presignedURL, err := s.minio.PresignedGetObject(ctx, s.bucket, imagePath, 24*time.Hour, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
+	}
+	
+	return presignedURL.String(), nil
+}
+
+// getMoveLock 获取或创建指定task_id的移动锁
+// 确保同一任务的图片按顺序移动，避免并发导致的内容错位
+func (s *Scheduler) getMoveLock(taskID string) *sync.Mutex {
+	s.moveLockMu.Lock()
+	defer s.moveLockMu.Unlock()
+	
+	if _, ok := s.moveLocks[taskID]; !ok {
+		s.moveLocks[taskID] = &sync.Mutex{}
+	}
+	
+	return s.moveLocks[taskID]
 }
 

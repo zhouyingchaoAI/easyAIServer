@@ -47,3 +47,11 @@ BB/
 nohup.out
 test_*.go
 check_*.sh
+INFERENCE_STOP_DIAGNOSIS.md
+
+# 学习目录
+learn_go/
+
+# 流媒体数据
+stream/
+vod_data/

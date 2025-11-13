@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -32,6 +33,8 @@ type Scheduler struct {
 	saveOnlyWithDetection bool                   // 只保存有检测结果的告警
 	httpClient            *http.Client           // 优化的HTTP客户端
 	alertBatchWriter      *data.AlertBatchWriter // 批量写入告警
+	monitor               *PerformanceMonitor    // 性能监控器（用于记录推理时间）
+	scanner               *Scanner               // 扫描器（用于标记图片已处理）
 	
 	// 移动锁：确保同一task_id的图片按顺序移动，避免并发错位
 	moveLocks  map[string]*sync.Mutex
@@ -39,24 +42,31 @@ type Scheduler struct {
 }
 
 // NewScheduler 创建调度器
-func NewScheduler(registry *AlgorithmRegistry, minioClient *minio.Client, bucket, alertBasePath string, mq MessageQueue, maxConcurrent int, saveOnlyWithDetection bool, alertBatchWriter *data.AlertBatchWriter, logger *slog.Logger) *Scheduler {
+func NewScheduler(registry *AlgorithmRegistry, minioClient *minio.Client, bucket, alertBasePath string, mq MessageQueue, maxConcurrent int, saveOnlyWithDetection bool, alertBatchWriter *data.AlertBatchWriter, monitor *PerformanceMonitor, scanner *Scanner, logger *slog.Logger) *Scheduler {
 	if maxConcurrent <= 0 {
 		maxConcurrent = 5
 	}
 	
-	// 优化HTTP客户端配置
+	// 优化HTTP客户端配置 - 为达到100%成功率
 	transport := &http.Transport{
 		MaxIdleConns:          200,
 		MaxIdleConnsPerHost:   50,
 		IdleConnTimeout:       90 * time.Second,
 		DisableCompression:    false,
-		ResponseHeaderTimeout: 60 * time.Second,
+		ResponseHeaderTimeout: 300 * time.Second, // 增加到300秒，确保不会在读取响应体前超时
 		ExpectContinueTimeout: 1 * time.Second,
+		// 关键：禁用连接复用，每次使用新连接，避免连接被提前关闭导致context canceled
+		DisableKeepAlives: true,  // 改为true，确保连接稳定性
+		// 增加连接超时时间
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 0, // 禁用keep-alive
+		}).DialContext,
 	}
 	
 	httpClient := &http.Client{
 		Transport: transport,
-		Timeout:   60 * time.Second,
+		Timeout:   300 * time.Second, // 增加到300秒，确保有足够时间完成请求和读取响应
 	}
 	
 	return &Scheduler{
@@ -70,6 +80,8 @@ func NewScheduler(registry *AlgorithmRegistry, minioClient *minio.Client, bucket
 		saveOnlyWithDetection: saveOnlyWithDetection,
 		httpClient:            httpClient,
 		alertBatchWriter:      alertBatchWriter,
+		monitor:               monitor,
+		scanner:               scanner,
 		moveLocks:             make(map[string]*sync.Mutex),
 	}
 }
@@ -89,6 +101,11 @@ func (s *Scheduler) ScheduleInference(image ImageInfo) {
 			s.log.Warn("failed to delete image without algorithm",
 				slog.String("path", image.Path),
 				slog.String("err", err.Error()))
+		} else {
+			// 图片已删除，标记为已处理（避免重复扫描）
+			if s.scanner != nil {
+				s.scanner.MarkProcessed(image.Path)
+			}
 		}
 		
 		return
@@ -110,7 +127,32 @@ func (s *Scheduler) ScheduleInference(image ImageInfo) {
 
 // inferAndSave 调用算法推理并保存结果
 func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmService) {
+	// 处理前检查图片是否存在（避免处理已删除的图片）
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	_, statErr := s.minio.StatObject(ctx, s.bucket, image.Path, minio.StatObjectOptions{})
+	cancel()
+	
+	if statErr != nil {
+		// 图片不存在，跳过处理（可能是被丢弃时删除了）
+		s.log.Warn("image not found in MinIO, skipping inference",
+			slog.String("path", image.Path),
+			slog.String("task_id", image.TaskID),
+			slog.String("err", statErr.Error()),
+			slog.String("note", "image may have been deleted when dropped from queue"))
+		
+		// 标记为已处理，避免重复扫描
+		if s.scanner != nil {
+			s.scanner.MarkProcessed(image.Path)
+		}
+		return
+	}
+	
 	// 生成预签名URL（带重试机制）
+	// 注意：MinIO SDK生成签名时使用UTC时间，但MinIO服务器验证时使用CST时间
+	// 时差8小时，因此需要增加有效期以补偿时区差
+	// 1小时有效期 + 8小时时差 + 1小时缓冲 = 10小时
+	presignedExpiry := 10 * time.Hour
+	
 	var presignedURL *url.URL
 	var err error
 	maxRetries := 3
@@ -119,7 +161,7 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 	for i := 0; i < maxRetries; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		
-		presignedURL, err = s.minio.PresignedGetObject(ctx, s.bucket, image.Path, 1*time.Hour, nil)
+		presignedURL, err = s.minio.PresignedGetObject(ctx, s.bucket, image.Path, presignedExpiry, nil)
 		cancel()
 		
 		if err == nil {
@@ -167,12 +209,13 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 			}
 			
 			// 生成配置文件的预签名URL
+			// 同样需要补偿时区差（10小时有效期）
 			configPath := fxService.GetAlgorithmConfigPath(image.TaskID)
 			if configPath != "" {
 				configURLCtx, configURLCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer configURLCancel()
 				
-				presignedConfigURL, err := s.minio.PresignedGetObject(configURLCtx, s.bucket, configPath, 1*time.Hour, nil)
+				presignedConfigURL, err := s.minio.PresignedGetObject(configURLCtx, s.bucket, configPath, presignedExpiry, nil)
 				if err == nil {
 					algoConfigURL = presignedConfigURL.String()
 				} else {
@@ -208,25 +251,50 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 	// 调用算法服务
 	resp, err := s.callAlgorithm(algorithm, req)
 	if err != nil {
+		// 检查是否是404错误（图片不存在）
+		is404Error := strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "Not Found")
+		
 		// ❌ 推理调用失败，记录日志（不注销服务，服务状态由心跳管理）
 		s.registry.RecordInferenceFailure(algorithm.Endpoint, algorithm.ServiceID)
 		
-		s.log.Error("algorithm inference failed",
-			slog.String("algorithm", algorithm.ServiceID),
-			slog.String("endpoint", algorithm.Endpoint),
-			slog.String("image", image.Path),
-			slog.String("err", err.Error()),
-			slog.String("note", "service will be removed by heartbeat timeout if truly offline"))
+		// 记录失败到监控器
+		if s.monitor != nil {
+			// 计算失败前的耗时
+			failedTime := time.Since(inferStartTime).Milliseconds()
+			s.monitor.RecordInference(failedTime, false)
+		}
 		
-		// 推理失败，删除图片（避免积压，图片已尝试推理过）
-		if delErr := s.deleteImageWithReason(image.Path, "inference_call_failed"); delErr != nil {
-			s.log.Error("failed to delete image after inference failure",
-				slog.String("path", image.Path),
-				slog.String("err", delErr.Error()))
+		if is404Error {
+			// 404错误：图片不存在，跳过处理，不删除（可能已经被删除）
+			s.log.Warn("algorithm inference failed: image not found (404)",
+				slog.String("algorithm", algorithm.ServiceID),
+				slog.String("endpoint", algorithm.Endpoint),
+				slog.String("image", image.Path),
+				slog.String("err", err.Error()),
+				slog.String("note", "image may have been deleted from MinIO, skipping"))
 		} else {
-			s.log.Info("image deleted after inference failure",
-				slog.String("path", image.Path),
-				slog.String("algorithm", algorithm.ServiceID))
+			s.log.Error("algorithm inference failed",
+				slog.String("algorithm", algorithm.ServiceID),
+				slog.String("endpoint", algorithm.Endpoint),
+				slog.String("image", image.Path),
+				slog.String("err", err.Error()),
+				slog.String("note", "service will be removed by heartbeat timeout if truly offline"))
+			
+			// 非404错误，删除图片（避免积压，图片已尝试推理过）
+			if delErr := s.deleteImageWithReason(image.Path, "inference_call_failed"); delErr != nil {
+				s.log.Error("failed to delete image after inference failure",
+					slog.String("path", image.Path),
+					slog.String("err", delErr.Error()))
+			} else {
+				s.log.Info("image deleted after inference failure",
+					slog.String("path", image.Path),
+					slog.String("algorithm", algorithm.ServiceID))
+			}
+		}
+		
+		// 标记为已处理（避免重复扫描）
+		if s.scanner != nil {
+			s.scanner.MarkProcessed(image.Path)
 		}
 		return
 	}
@@ -235,12 +303,27 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 	actualInferenceTime := time.Since(inferStartTime).Milliseconds()
 	
 	if !resp.Success {
+		// 记录失败到监控器
+		if s.monitor != nil {
+			actualInferenceTime := time.Since(inferStartTime).Milliseconds()
+			s.monitor.RecordInference(actualInferenceTime, false)
+		}
+		
 		s.log.Warn("inference not successful",
 			slog.String("algorithm", algorithm.ServiceID),
 			slog.String("image", image.Path),
 			slog.String("error", resp.Error))
 		// 推理失败，删除图片
-		s.deleteImageWithReason(image.Path, "inference_failed")
+		if err := s.deleteImageWithReason(image.Path, "inference_failed"); err != nil {
+			s.log.Error("failed to delete image after inference failure",
+				slog.String("path", image.Path),
+				slog.String("err", err.Error()))
+		} else {
+			// 图片已删除，标记为已处理（避免重复扫描）
+			if s.scanner != nil {
+				s.scanner.MarkProcessed(image.Path)
+			}
+		}
 		return
 	}
 
@@ -251,6 +334,12 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 		reportedTimeMs = actualInferenceTime
 	}
 	s.registry.RecordInferenceSuccess(algorithm.Endpoint, reportedTimeMs)
+	
+	// 记录到性能监控器（使用算法服务返回的推理时间，而不是总处理时间）
+	if s.monitor != nil {
+		s.monitor.RecordInference(reportedTimeMs, true)
+	}
+	
 	s.log.Debug("inference succeeded, call count incremented and response time recorded",
 		slog.String("endpoint", algorithm.Endpoint),
 		slog.String("service_id", algorithm.ServiceID),
@@ -285,6 +374,10 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
             s.log.Info("image deleted successfully (no detection)",
                 slog.String("path", image.Path),
                 slog.String("task_id", image.TaskID))
+            // 图片已删除，标记为已处理（避免重复扫描）
+            if s.scanner != nil {
+                s.scanner.MarkProcessed(image.Path)
+            }
         }
 
         return
@@ -413,6 +506,11 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 		}
 	}
 	
+	// 推理成功并已保存告警，标记图片为已处理
+	if s.scanner != nil {
+		s.scanner.MarkProcessed(image.Path)
+	}
+	
 	// 如果未配置告警路径（使用了原路径），告警已保存后删除原文件
 	// 注意：删除后alert记录中的ImagePath会失效，但用户要求总是删除原路径
 	if s.alertBasePath == "" && alertImagePath == image.Path {
@@ -437,30 +535,62 @@ func (s *Scheduler) callAlgorithm(algorithm conf.AlgorithmService, req conf.Infe
 		return nil, fmt.Errorf("marshal request failed: %w", err)
 	}
 
-	maxRetries := 3
-	retryDelay := 2 * time.Second
+	maxRetries := 10 // 增加到10次重试，确保100%成功率
+	retryDelay := 1 * time.Second  // 减少重试延迟，加快恢复
 	var lastErr error
 
-	for i := 0; i < maxRetries; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		for i := 0; i < maxRetries; i++ {
+		// 为达到100%成功率，每次重试都创建全新的HTTP客户端，确保完全隔离
+		// 创建独立的Transport，避免连接状态问题
+		isolatedTransport := &http.Transport{
+			MaxIdleConns:          1,
+			MaxIdleConnsPerHost:  1,
+			IdleConnTimeout:       30 * time.Second,
+			DisableCompression:    false,
+			ResponseHeaderTimeout: 300 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			DisableKeepAlives:     true,  // 禁用连接复用
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 0,
+			}).DialContext,
+		}
 		
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", algorithm.Endpoint, bytes.NewReader(reqBody))
+		isolatedClient := &http.Client{
+			Transport: isolatedTransport,
+			Timeout:   300 * time.Second,
+		}
+		
+		// 不使用context，直接使用HTTP客户端的超时设置，避免context canceled错误
+		httpReq, err := http.NewRequest("POST", algorithm.Endpoint, bytes.NewReader(reqBody))
 		if err != nil {
-			cancel()
 			return nil, fmt.Errorf("create request failed: %w", err)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Connection", "close")  // 强制关闭连接
 
-		httpResp, err := s.httpClient.Do(httpReq)
-		cancel()
+		httpResp, err := isolatedClient.Do(httpReq)
 		
 		if err == nil {
 			defer httpResp.Body.Close()
 
 			if httpResp.StatusCode == http.StatusOK {
 				var resp conf.InferenceResponse
-				if err := json.NewDecoder(httpResp.Body).Decode(&resp); err != nil {
-					return nil, fmt.Errorf("decode response failed: %w", err)
+				// 先读取全部响应体，避免在读取时连接被关闭导致错误
+				bodyBytes, readErr := io.ReadAll(httpResp.Body)
+				if readErr != nil {
+					lastErr = fmt.Errorf("read response failed: %w", readErr)
+					continue // 继续重试
+				}
+				
+				// 解析JSON响应
+				if err := json.Unmarshal(bodyBytes, &resp); err != nil {
+					bodyPreview := string(bodyBytes)
+					if len(bodyPreview) > 200 {
+						bodyPreview = bodyPreview[:200] + "..."
+					}
+					lastErr = fmt.Errorf("decode response failed: %w (body: %s)", err, bodyPreview)
+					continue // 继续重试
 				}
 				
 				if i > 0 {
@@ -468,12 +598,24 @@ func (s *Scheduler) callAlgorithm(algorithm conf.AlgorithmService, req conf.Infe
 						slog.Int("attempt", i+1),
 						slog.String("endpoint", algorithm.Endpoint))
 				}
+				// 成功时，defer cancel()会在函数返回时执行
 				return &resp, nil
 			}
 			
 			// 非200状态码
 			body, _ := io.ReadAll(httpResp.Body)
-			lastErr = fmt.Errorf("HTTP %d: %s", httpResp.StatusCode, string(body))
+			bodyStr := string(body)
+			lastErr = fmt.Errorf("HTTP %d: %s", httpResp.StatusCode, bodyStr)
+			
+			// 404错误（图片不存在）不重试，直接返回
+			if httpResp.StatusCode == http.StatusNotFound || strings.Contains(bodyStr, "404") || strings.Contains(bodyStr, "Not Found") {
+				s.log.Warn("image not found (404), skipping retry",
+					slog.String("endpoint", algorithm.Endpoint),
+					slog.String("image_url", req.ImageURL),
+					slog.String("error", lastErr.Error()),
+					slog.String("note", "image may have been deleted from MinIO"))
+				return nil, lastErr
+			}
 		} else {
 			lastErr = err
 		}
@@ -690,6 +832,8 @@ func (s *Scheduler) getFrameExtractorService() *frameextractor.Service {
 }
 
 // generatePresignedURL 生成图片的预签名URL
+// 注意：MinIO SDK生成签名时使用UTC时间，但MinIO服务器验证时使用CST时间
+// 时差8小时，24小时有效期已经足够覆盖时区差
 func (s *Scheduler) generatePresignedURL(imagePath string) (string, error) {
 	if imagePath == "" {
 		return "", nil
@@ -698,6 +842,7 @@ func (s *Scheduler) generatePresignedURL(imagePath string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	
+	// 24小时有效期已经足够覆盖8小时时差，保持原值
 	presignedURL, err := s.minio.PresignedGetObject(ctx, s.bucket, imagePath, 24*time.Hour, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate presigned URL: %w", err)

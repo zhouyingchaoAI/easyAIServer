@@ -165,11 +165,11 @@ func (s *Service) Start() error {
 	)
 	s.alertBatchWriter.Start()
 	
-	// 初始化调度器
-	s.scheduler = NewScheduler(s.registry, minioClient, s.fxCfg.MinIO.Bucket, alertBasePath, s.mq, s.cfg.MaxConcurrentInfer, s.cfg.SaveOnlyWithDetection, s.alertBatchWriter, s.log)
-
 	// 初始化扫描器
 	s.scanner = NewScanner(minioClient, s.fxCfg.MinIO.Bucket, s.fxCfg.MinIO.BasePath, alertBasePath, s.log)
+	
+	// 初始化调度器
+	s.scheduler = NewScheduler(s.registry, minioClient, s.fxCfg.MinIO.Bucket, alertBasePath, s.mq, s.cfg.MaxConcurrentInfer, s.cfg.SaveOnlyWithDetection, s.alertBatchWriter, s.monitor, s.scanner, s.log)
 
 	// 启动智能推理循环
 	s.startSmartInferenceLoop()
@@ -199,10 +199,8 @@ func (s *Service) startSmartInferenceLoop() {
 				slog.Int("queue_size", s.queue.Size()))
 		}
 		
-		// 标记所有图片为已扫描
-		for _, img := range images {
-			s.scanner.MarkProcessed(img.Path)
-		}
+		// 注意：不在这里标记为已处理，而是在推理成功或明确处理完成后才标记
+		// 这样可以确保历史图片和失败的图片能够被重新处理
 	})
 	
 	// 启动多个推理处理worker以提升并发处理能力
@@ -238,15 +236,8 @@ func (s *Service) inferenceProcessLoop() {
 			continue
 		}
 		
-		// 记录开始时间
-		startTime := time.Now()
-		
-		// 调度推理
+		// 调度推理（推理时间已在 Scheduler 中记录到监控器）
 		s.scheduler.ScheduleInference(img)
-		
-		// 记录推理时间
-		inferenceTime := time.Since(startTime).Milliseconds()
-		s.monitor.RecordInference(inferenceTime, true)
 	}
 }
 

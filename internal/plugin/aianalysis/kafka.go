@@ -23,19 +23,18 @@ func NewKafkaQueue(address, topic string, logger *slog.Logger) *KafkaQueue {
 		topic: topic,
 		log:   logger,
 		writer: &kafka.Writer{
-			Addr:                   kafka.TCP(address),
-			Topic:                  topic,
-			Balancer:               &kafka.LeastBytes{},
-			WriteTimeout:           5 * time.Second,  // 减少超时时间
-			ReadTimeout:            5 * time.Second,
-			Async:                  false,             // 同步写入，确保消息发送成功
-			RequiredAcks:           kafka.RequireNone, // 不等待ACK，提高速度
-			BatchSize:              1,                // 每条消息立即发送
-			BatchBytes:             1,                // 立即发送
-			BatchTimeout:           time.Microsecond, // 几乎无延迟
-			MaxAttempts:            3,                // 重试3次
-			WriteBackoffMin:        100 * time.Millisecond,
-			WriteBackoffMax:        1 * time.Second,
+			Addr:            kafka.TCP(address),
+			Topic:           topic,
+			Balancer:        &kafka.LeastBytes{},
+			WriteTimeout:    10 * time.Second,
+			ReadTimeout:     10 * time.Second,
+			Async:           false,             // 同步写入，确保消息发送成功
+			RequiredAcks:    kafka.RequireOne, // 等待 leader 确认，避免消息丢失
+			BatchSize:       1,                // 每条消息立即发送
+			BatchTimeout:    time.Millisecond,
+			MaxAttempts:     3, // 重试3次
+			WriteBackoffMin: 100 * time.Millisecond,
+			WriteBackoffMax: 1 * time.Second,
 		},
 	}
 }

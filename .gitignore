@@ -18,6 +18,9 @@ logs/
 data/
 snapshots/
 stream/
+*.db
+*.db-shm
+*.db-wal
 
 # 临时文件
 *.tmp
@@ -37,3 +40,10 @@ vendor/
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# 备份和测试文件
+BB/
+*.backup.*
+nohup.out
+test_*.go
+check_*.sh

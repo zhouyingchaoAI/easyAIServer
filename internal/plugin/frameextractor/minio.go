@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -182,6 +183,8 @@ func (s *Service) runMinioSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
 	minBackoff := 1 * time.Second
 	maxBackoff := 30 * time.Second
 	backoff := minBackoff
+	// 数据读取超时：如果60秒内没有读取到数据，重新连接
+	dataTimeout := 60 * time.Second
 
 	for {
 		select {
@@ -235,6 +238,18 @@ func (s *Service) runMinioSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
 			continue
 		}
 
+		s.log.Info("ffmpeg started, connecting to RTSP stream", 
+			slog.String("task", task.ID), 
+			slog.String("rtsp", task.RtspURL),
+			slog.Duration("backoff", backoff))
+		// 成功启动后重置backoff（如果之前有失败）
+		backoff = minBackoff
+
+		// 用于通知主循环stdout读取失败或超时
+		readError := make(chan error, 1)
+		lastFrameTime := time.Now()
+		var lastFrameTimeMu sync.Mutex
+
 		// read frames and upload
 		go func() {
 			buf := make([]byte, 1024*1024) // 1MB buffer for JPEG
@@ -242,6 +257,10 @@ func (s *Service) runMinioSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
 				// read JPEG marker (FF D8)
 				_, err := stdout.Read(buf[:2])
 				if err != nil {
+					s.log.Warn("stdout read failed, will reconnect", 
+						slog.String("task", task.ID), 
+						slog.String("err", err.Error()))
+					readError <- err
 					return
 				}
 				if buf[0] != 0xFF || buf[1] != 0xD8 {
@@ -254,6 +273,10 @@ func (s *Service) runMinioSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
 				for {
 					n, err := stdout.Read(buf[:1])
 					if err != nil {
+						s.log.Warn("stdout read failed while reading frame, will reconnect", 
+							slog.String("task", task.ID), 
+							slog.String("err", err.Error()))
+						readError <- err
 						return
 					}
 					frame.WriteByte(buf[0])
@@ -261,6 +284,11 @@ func (s *Service) runMinioSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
 						break
 					}
 				}
+
+				// 更新最后读取时间
+				lastFrameTimeMu.Lock()
+				lastFrameTime = time.Now()
+				lastFrameTimeMu.Unlock()
 
 				// upload frame
 				ts := time.Now().Format("20060102-150405.000")
@@ -295,8 +323,37 @@ func (s *Service) runMinioSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
 			}
 		}()
 
+		// 超时检测goroutine
+		go func() {
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					lastFrameTimeMu.Lock()
+					lastFrame := lastFrameTime
+					lastFrameTimeMu.Unlock()
+					if time.Since(lastFrame) > dataTimeout {
+						s.log.Warn("no data received for too long, will reconnect", 
+							slog.String("task", task.ID),
+							slog.Duration("timeout", dataTimeout),
+							slog.Duration("since_last_frame", time.Since(lastFrame)))
+						// 杀死FFmpeg进程以触发重连
+						_ = cmd.Process.Kill()
+						readError <- fmt.Errorf("data timeout: no frame received for %v", time.Since(lastFrame))
+						return
+					}
+				case <-s.stop:
+					return
+				case <-stop:
+					return
+				}
+			}
+		}()
+
 		procDone := make(chan error, 1)
 		go func() { procDone <- cmd.Wait() }()
+		
 		select {
 		case <-s.stop:
 			_ = cmd.Process.Kill()
@@ -306,12 +363,38 @@ func (s *Service) runMinioSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
 			_ = cmd.Process.Kill()
 			<-procDone
 			return
-		case err := <-procDone:
-			if err != nil {
-				s.log.Warn("ffmpeg exited", slog.String("task", task.ID), slog.String("err", err.Error()), slog.String("stderr", truncate(stderr.String(), 512)))
-			} else {
-				s.log.Warn("ffmpeg exited normally", slog.String("task", task.ID))
+		case err := <-readError:
+			// stdout读取失败或超时，杀死进程并重连
+			_ = cmd.Process.Kill()
+			<-procDone
+			s.log.Info("reconnecting due to read error or timeout", 
+				slog.String("task", task.ID), 
+				slog.String("err", err.Error()),
+				slog.Duration("backoff", backoff))
+			t := time.NewTimer(backoff)
+			select {
+			case <-s.stop:
+				t.Stop()
+				return
+			case <-stop:
+				t.Stop()
+				return
+			case <-t.C:
 			}
+			backoff = nextBackoff(backoff, maxBackoff)
+		case err := <-procDone:
+			// FFmpeg进程退出
+			if err != nil {
+				s.log.Warn("ffmpeg exited, will reconnect", 
+					slog.String("task", task.ID), 
+					slog.String("err", err.Error()), 
+					slog.String("stderr", truncate(stderr.String(), 512)))
+			} else {
+				s.log.Warn("ffmpeg exited normally, will reconnect", slog.String("task", task.ID))
+			}
+			s.log.Info("reconnecting after ffmpeg exit", 
+				slog.String("task", task.ID),
+				slog.Duration("backoff", backoff))
 			t := time.NewTimer(backoff)
 			select {
 			case <-s.stop:

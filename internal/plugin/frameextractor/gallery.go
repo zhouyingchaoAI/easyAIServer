@@ -176,8 +176,10 @@ func (s *Service) listMinioSnapshots(taskID string) ([]SnapshotInfo, error) {
 			continue
 		}
 		
-		// generate presigned URL for preview (valid for 1 hour)
-		presignedURL, err := s.minio.client.PresignedGetObject(ctx, s.minio.bucket, object.Key, time.Hour, nil)
+		// generate presigned URL for preview
+		// 注意：MinIO SDK生成签名时使用UTC时间，但MinIO服务器验证时使用CST时间
+		// 时差8小时，因此需要增加有效期以补偿时区差（10小时有效期）
+		presignedURL, err := s.minio.client.PresignedGetObject(ctx, s.minio.bucket, object.Key, 10*time.Hour, nil)
 		if err != nil {
 			s.log.Warn("failed to generate presigned URL", slog.String("key", object.Key), slog.String("err", err.Error()))
 			continue

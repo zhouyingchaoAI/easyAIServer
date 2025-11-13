@@ -82,7 +82,7 @@
           <a-row :gutter="24">
             <a-col :xs="24" :sm="12">
               <a-form-item label="Endpoint">
-                <a-input v-model:value="config.minio.endpoint" size="large" placeholder="minio.example.com:9000">
+                <a-input v-model:value="config.minio.endpoint" size="large" placeholder="127.0.0.1:9000">
                   <template #prefix><ApiOutlined /></template>
                 </a-input>
               </a-form-item>
@@ -405,7 +405,7 @@ const config = ref({
   output_dir: './snapshots',
   store: 'local',
   minio: {
-    endpoint: '',
+    endpoint: '127.0.0.1:9000',
     bucket: '',
     access_key: '',
     secret_key: '',
@@ -446,7 +446,7 @@ const fetchConfig = async () => {
       // ensure MinIO sub-config exists before merge
       if (!data.minio || typeof data.minio !== 'object') {
         data.minio = {
-          endpoint: '',
+          endpoint: '127.0.0.1:9000',
           bucket: '',
           access_key: '',
           secret_key: '',
@@ -461,7 +461,7 @@ const fetchConfig = async () => {
         output_dir: data.output_dir || config.value.output_dir,
         store: data.store || config.value.store,
         minio: {
-          endpoint: data.minio.endpoint || '',
+          endpoint: data.minio.endpoint || '127.0.0.1:9000',
           bucket: data.minio.bucket || '',
           access_key: data.minio.access_key || '',
           secret_key: data.minio.secret_key || '',

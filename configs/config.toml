@@ -268,6 +268,54 @@ interval_ms = 200
 output_path = '厕所2'
 enabled = true
 
+[[frame_extractor.tasks]]
+id = '测试3'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.200:554/LiveMedia/ch1/Media1'
+interval_ms = 200
+output_path = '测试3'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '无人测试3'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.201:554/LiveMedia/ch1/Media1'
+interval_ms = 200
+output_path = '无人测试3'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '测试4'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.200:554/LiveMedia/ch1/Media1'
+interval_ms = 200
+output_path = '测试4'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '无人测试4'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.201:554/LiveMedia/ch1/Media1'
+interval_ms = 1000
+output_path = '无人测试4'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '测试5'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.200:554/LiveMedia/ch1/Media1'
+interval_ms = 200
+output_path = '测试5'
+enabled = true
+
+[[frame_extractor.tasks]]
+id = '无人测试5'
+task_type = '人数统计'
+rtsp_url = 'rtsp://admin:HuaWei123@10.1.4.201:554/LiveMedia/ch1/Media1'
+interval_ms = 200
+output_path = '无人测试5'
+enabled = true
+
 [ai_analysis]
 enable = true  # 启用智能分析插件
 scan_interval_sec = 1  # MinIO扫描间隔（秒）
@@ -275,8 +323,8 @@ mq_type = 'kafka'  # 消息队列类型：kafka|rabbitmq
 mq_address = '172.16.5.207:9092'  # 消息队列地址
 mq_topic = 'easyai.alerts'  # 告警推送topic
 heartbeat_timeout_sec = 60  # 算法服务心跳超时（秒）
-max_concurrent_infer = 100  # 最大并发推理任务数
-max_queue_size = 5000  # 推理队列最大容量，默认: 100，建议根据实际情况调整
+max_concurrent_infer = 200  # 最大并发推理任务数
+max_queue_size = 8000  # 推理队列最大容量，默认: 100，建议根据实际情况调整
 save_only_with_detection = true  # 只保存有检测结果的告警，无检测结果的图片将被删除
 alert_base_path = 'alerts/'  # 告警图片存储路径前缀，与抽帧路径分离
 

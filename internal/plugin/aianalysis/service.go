@@ -52,7 +52,7 @@ func (s *Service) Start() error {
 	}
 
 	s.log.Info("starting AI analysis plugin",
-		slog.Int("scan_interval", s.cfg.ScanIntervalSec),
+		slog.Float64("scan_interval", s.cfg.ScanIntervalSec),
 		slog.String("mq_type", s.cfg.MQType),
 		slog.String("mq_address", s.cfg.MQAddress),
 		slog.Bool("save_only_with_detection", s.cfg.SaveOnlyWithDetection))
@@ -170,12 +170,30 @@ func (s *Service) Start() error {
 	
 	// 初始化调度器
 	s.scheduler = NewScheduler(s.registry, minioClient, s.fxCfg.MinIO.Bucket, alertBasePath, s.mq, s.cfg.MaxConcurrentInfer, s.cfg.SaveOnlyWithDetection, s.alertBatchWriter, s.monitor, s.scanner, s.log)
+	
+	// 设置处理完成回调，用于增加processedCount
+	s.scheduler.SetOnProcessedCallback(func() {
+		s.queue.RecordProcessed()
+	})
 
 	// 启动智能推理循环
 	s.startSmartInferenceLoop()
 
 	// 设置全局实例
 	globalService = s
+	
+	// 注册图片检查器到Frame Extractor，只保护正在推理的图片（不保护队列中等待的）
+	// 这样可以避免队列积压导致清理失效，同时确保正在推理的图片不会被清理
+	fxService := frameextractor.GetGlobal()
+	if fxService != nil {
+		fxService.SetQueueChecker(func(imagePath string) bool {
+			// 只保护正在推理的图片，不保护队列中等待的图片
+			// 这样可以避免队列积压导致清理失效
+			return s.scheduler.IsImageInferring(imagePath)
+		})
+		s.log.Info("image checker registered to frame extractor",
+			slog.String("note", "only images currently being inferred will be protected from cleanup, not images waiting in queue"))
+	}
 
 	s.log.Info("AI analysis plugin started successfully",
 		slog.Int("queue_max_size", maxQueueSize),
@@ -190,17 +208,29 @@ func (s *Service) Start() error {
 func (s *Service) startSmartInferenceLoop() {
 	// 启动扫描器
 	s.scanner.Start(s.cfg.ScanIntervalSec, func(images []ImageInfo) {
-		// 添加到智能队列
+		// 添加到智能队列（Add方法内部会去重）
+		queueAddStart := time.Now()
 		added := s.queue.Add(images)
+		queueAddDuration := time.Since(queueAddStart)
 		
 		if added > 0 {
 			s.log.Info("images added to queue",
 				slog.Int("added", added),
-				slog.Int("queue_size", s.queue.Size()))
+				slog.Int("queue_size", s.queue.Size()),
+				slog.Duration("queue_add_duration_ms", queueAddDuration))
+			
+			// 立即标记已加入队列的图片为已处理，防止重复扫描
+			// 注意：由于队列Add方法已经去重，这里需要检查哪些图片真正加入了队列
+			// 但由于队列去重是在Add方法内部完成的，我们无法直接获取去重后的列表
+			// 因此，我们标记所有传入的图片，如果图片已在队列中，说明之前已经标记过了
+			// 重复标记不会造成问题，只是会更新标记时间
+			for _, img := range images {
+				s.scanner.MarkProcessed(img.Path)
+			}
 		}
 		
-		// 注意：不在这里标记为已处理，而是在推理成功或明确处理完成后才标记
-		// 这样可以确保历史图片和失败的图片能够被重新处理
+		// 注意：图片在加入队列时立即标记为已处理，防止重复扫描
+		// 如果推理失败，scheduler会在失败时删除图片并标记为已处理
 	})
 	
 	// 启动多个推理处理worker以提升并发处理能力
@@ -208,10 +238,8 @@ func (s *Service) startSmartInferenceLoop() {
 	if workerCount <= 0 {
 		workerCount = 5  // 默认5个worker
 	}
-	// 限制worker数量上限，避免过多goroutine
-	if workerCount > 200 {
-		workerCount = 200
-	}
+	// 移除硬编码限制，允许使用配置的并发数
+	// 注意：过高的并发数可能导致资源耗尽，建议根据实际情况调整
 	
 	s.log.Info("starting inference workers",
 		slog.Int("worker_count", workerCount),
@@ -228,16 +256,62 @@ func (s *Service) startSmartInferenceLoop() {
 
 // inferenceProcessLoop 推理处理循环
 func (s *Service) inferenceProcessLoop() {
+	emptyQueueCount := 0
 	for {
 		// 从队列取出图片
+		popStart := time.Now()
 		img, ok := s.queue.Pop()
+		popDuration := time.Since(popStart)
 		if !ok {
-			time.Sleep(100 * time.Millisecond)
+			emptyQueueCount++
+			// 每100次空队列才记录一次日志，避免日志过多
+			if emptyQueueCount%100 == 0 {
+				s.log.Debug("queue empty, waiting",
+					slog.Int("empty_count", emptyQueueCount),
+					slog.Duration("pop_duration_ms", popDuration))
+			}
+			// 优化：减少sleep时间从100ms到10ms，提高响应速度
+			// 这样可以更快地处理新加入队列的图片，减少等待时间
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		emptyQueueCount = 0
+		
+		// 在调度推理前，先检查图片是否还存在（避免处理已被清理的图片）
+		// 注意：由于现在队列中等待的图片不再保护，可能在等待时被清理
+		// 所以在Pop后、调度前检查，如果不存在，跳过处理
+		exists, statErr := s.scheduler.CheckImageExists(img.Path)
+		
+		if statErr != nil || !exists {
+			// 图片不存在，跳过处理（可能已被清理）
+			s.log.Debug("image not found before inference, skipping",
+				slog.String("task_id", img.TaskID),
+				slog.String("image", img.Filename),
+				slog.String("path", img.Path),
+				slog.String("err", statErr.Error()),
+				slog.String("note", "image may have been deleted while waiting in queue"))
+			
+			// 标记为已处理，避免重复扫描
+			// 注意：图片不存在不算处理，不增加processedCount
+			if s.scanner != nil {
+				s.scanner.MarkProcessed(img.Path)
+			}
 			continue
 		}
 		
 		// 调度推理（推理时间已在 Scheduler 中记录到监控器）
+		// 注意：processedCount会在推理成功或失败后通过回调自动增加
+		scheduleStart := time.Now()
 		s.scheduler.ScheduleInference(img)
+		totalDuration := time.Since(scheduleStart)
+		
+		// 记录worker处理耗时（包含调度和推理）
+		// Debug级别，避免日志过多
+		s.log.Debug("worker processed image",
+			slog.String("task_id", img.TaskID),
+			slog.String("image", img.Filename),
+			slog.Duration("pop_duration_ms", popDuration),
+			slog.Duration("total_process_duration_ms", totalDuration))
 	}
 }
 
@@ -326,6 +400,11 @@ func (s *Service) GetRegistry() *AlgorithmRegistry {
 	return s.registry
 }
 
+// GetQueue 获取推理队列
+func (s *Service) GetQueue() *InferenceQueue {
+	return s.queue
+}
+
 // InferenceStats 推理统计信息
 type InferenceStats struct {
 	QueueSize       int     `json:"queue_size"`        // 当前队列大小
@@ -338,7 +417,9 @@ type InferenceStats struct {
 	AvgInferenceMs  float64 `json:"avg_inference_ms"`  // 平均推理时间(ms)
 	MaxInferenceMs  int64   `json:"max_inference_ms"`  // 最大推理时间(ms)
 	TotalInferences int64   `json:"total_inferences"`  // 总推理次数
+	SuccessInferences int64 `json:"success_inferences"` // 成功推理次数
 	FailedInferences int64  `json:"failed_inferences"` // 失败次数
+	SuccessRatePerSec float64 `json:"success_rate_per_sec"` // 每秒推理成功数（张/秒）
 	UpdatedAt       string  `json:"updated_at"`        // 更新时间
 }
 
@@ -354,6 +435,16 @@ func (s *Service) GetInferenceStats() InferenceStats {
 	perfStats := s.monitor.GetStats()
 	dropRate := s.queue.GetDropRate()
 	
+	successCount := int64(0)
+	if sc, ok := perfStats["success_count"].(int64); ok {
+		successCount = sc
+	}
+	
+	successRatePerSec := 0.0
+	if sr, ok := perfStats["success_rate_per_sec"].(float64); ok {
+		successRatePerSec = sr
+	}
+	
 	return InferenceStats{
 		QueueSize:        queueStats["queue_size"].(int),
 		QueueMaxSize:     queueStats["max_size"].(int),
@@ -365,7 +456,9 @@ func (s *Service) GetInferenceStats() InferenceStats {
 		AvgInferenceMs:   perfStats["avg_inference_ms"].(float64),
 		MaxInferenceMs:   perfStats["max_inference_ms"].(int64),
 		TotalInferences:  perfStats["total_count"].(int64),
+		SuccessInferences: successCount,
 		FailedInferences: perfStats["failed_count"].(int64),
+		SuccessRatePerSec: successRatePerSec,
 		UpdatedAt:        time.Now().Format(time.RFC3339),
 	}
 }

@@ -36,12 +36,60 @@ type Service struct {
     // frame cleanup counters (per task)
     cleanupCounters map[string]*cleanupCounter
     cleanupMu       sync.Mutex
+    // 队列检查回调函数（用于检查图片是否在推理队列中，避免清理队列中的图片）
+    queueChecker func(string) bool
+    queueCheckerMu sync.RWMutex
+    // 抽帧速率统计（每秒抽帧数量）
+    frameRateStats frameRateMonitor
+    frameRateMu    sync.RWMutex
+}
+
+// frameRateMonitor 抽帧速率监控器
+type frameRateMonitor struct {
+    countInWindow    int64     // 窗口内的抽帧数量
+    windowStartTime  time.Time // 窗口开始时间
+    framesPerSec     float64   // 每秒抽帧数量
+    totalFrames      int64     // 总抽帧数量
+    lastFrameTime    time.Time // 上次抽帧时间
 }
 
 // cleanupCounter 清理计数器，用于限流
 type cleanupCounter struct {
     uploadCount  int       // 上传计数
     lastCleanup  time.Time // 上次清理时间
+}
+
+// SetQueueChecker 设置队列检查回调函数（用于检查图片是否在推理队列中）
+// 这个函数由AI分析服务在启动时注册，用于避免清理队列中的图片
+func (s *Service) SetQueueChecker(checker func(imagePath string) bool) {
+	s.queueCheckerMu.Lock()
+	defer s.queueCheckerMu.Unlock()
+	s.queueChecker = checker
+	s.log.Info("queue checker registered", slog.String("note", "images in inference queue will be protected from cleanup"))
+}
+
+// recordFrameExtracted 记录一次抽帧成功（用于计算每秒抽帧数量）
+func (s *Service) recordFrameExtracted() {
+	s.frameRateMu.Lock()
+	defer s.frameRateMu.Unlock()
+	
+	now := time.Now()
+	s.frameRateStats.countInWindow++
+	s.frameRateStats.totalFrames++
+	s.frameRateStats.lastFrameTime = now
+	
+	// 计算窗口内的每秒抽帧数（使用最近1秒的数据）
+	windowDuration := now.Sub(s.frameRateStats.windowStartTime).Seconds()
+	if windowDuration >= 1.0 {
+		// 窗口已满1秒，计算每秒抽帧数
+		s.frameRateStats.framesPerSec = float64(s.frameRateStats.countInWindow) / windowDuration
+		// 重置窗口
+		s.frameRateStats.countInWindow = 0
+		s.frameRateStats.windowStartTime = now
+	} else if windowDuration > 0 {
+		// 窗口未满1秒，使用当前数据估算
+		s.frameRateStats.framesPerSec = float64(s.frameRateStats.countInWindow) / windowDuration
+	}
 }
 
 // TaskStats 任务统计信息
@@ -53,6 +101,8 @@ type TaskStats struct {
     PendingTasks    int                `json:"pending_tasks"`     // 待配置的任务数
     TaskDetails     []TaskMonitorInfo  `json:"task_details"`      // 各任务详情
     SystemInfo      SystemMonitorInfo  `json:"system_info"`       // 系统信息
+    FramesPerSec    float64            `json:"frames_per_sec"`   // 每秒抽帧数量（张/秒）
+    TotalFrames     int64              `json:"total_frames"`     // 总抽帧数量
     UpdatedAt       time.Time          `json:"updated_at"`        // 更新时间
 }
 
@@ -85,6 +135,9 @@ func New(cfg *conf.FrameExtractorConfig) *Service {
         stop:            make(chan struct{}),
         taskStops:       make(map[string]chan struct{}),
         cleanupCounters: make(map[string]*cleanupCounter),
+        frameRateStats: frameRateMonitor{
+            windowStartTime: time.Now(),
+        },
     }
 }
 
@@ -803,6 +856,12 @@ func (s *Service) GetStats() TaskStats {
         CPUCores:      runtime.NumCPU(),
     }
     
+    // 获取抽帧速率统计
+    s.frameRateMu.RLock()
+    framesPerSec := s.frameRateStats.framesPerSec
+    totalFrames := s.frameRateStats.totalFrames
+    s.frameRateMu.RUnlock()
+    
     stats := TaskStats{
         TotalTasks:      totalTasks,
         RunningTasks:    runningTasks,
@@ -811,6 +870,8 @@ func (s *Service) GetStats() TaskStats {
         PendingTasks:    pendingTasks,
         TaskDetails:     taskDetails,
         SystemInfo:      systemInfo,
+        FramesPerSec:    framesPerSec,
+        TotalFrames:     totalFrames,
         UpdatedAt:       time.Now(),
     }
     

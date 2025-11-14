@@ -140,6 +140,39 @@
         </a-row>
       </a-card>
 
+      <!-- 抽帧速率监控 -->
+      <a-card title="抽帧速率" size="small" class="mb-4">
+        <a-row :gutter="16">
+          <a-col :xs="24" :sm="12" :md="8">
+            <a-card class="stat-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+              <a-statistic
+                title="每秒抽帧数量"
+                :value="stats.frames_per_sec"
+                :precision="2"
+                :value-style="{ color: '#fff', fontWeight: 'bold', fontSize: '28px' }"
+              >
+                <template #prefix>
+                  <ThunderboltOutlined style="color: #fff; font-size: 24px;" />
+                </template>
+                <template #suffix>
+                  <span style="font-size: 14px; color: rgba(255,255,255,0.8);">张/秒</span>
+                </template>
+              </a-statistic>
+            </a-card>
+          </a-col>
+          <a-col :xs="24" :sm="12" :md="8">
+            <a-statistic
+              title="总抽帧数量"
+              :value="stats.total_frames"
+            >
+              <template #suffix>
+                <span style="font-size: 14px; color: #999;">张</span>
+              </template>
+            </a-statistic>
+          </a-col>
+        </a-row>
+      </a-card>
+
       <!-- 负载均衡监控 -->
       <a-card title="负载均衡策略" size="small" class="mb-4" v-if="Object.keys(loadBalanceInfo).length > 0">
         <template #extra>
@@ -284,7 +317,7 @@
           <a-col :xs="24" :sm="8" :md="6">
             <a-statistic
               title="推理成功"
-              :value="inferenceStats.total_inferences"
+              :value="inferenceStats.success_inferences"
             >
               <template #suffix>
                 <span style="font-size: 14px; color: #999;">次</span>
@@ -301,6 +334,25 @@
                 <span style="font-size: 14px; color: #999;">次</span>
               </template>
             </a-statistic>
+          </a-col>
+        </a-row>
+        <a-row :gutter="16" class="mt-3">
+          <a-col :xs="24" :sm="8" :md="6">
+            <a-card class="stat-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+              <a-statistic
+                title="每秒推理成功数"
+                :value="inferenceStats.success_rate_per_sec"
+                :precision="2"
+                :value-style="{ color: '#fff', fontWeight: 'bold', fontSize: '28px' }"
+              >
+                <template #prefix>
+                  <ThunderboltOutlined style="color: #fff; font-size: 24px;" />
+                </template>
+                <template #suffix>
+                  <span style="font-size: 14px; color: rgba(255,255,255,0.8);">张/秒</span>
+                </template>
+              </a-statistic>
+            </a-card>
           </a-col>
         </a-row>
         <!-- 告警提示 -->
@@ -365,7 +417,8 @@ import {
   PauseCircleOutlined,
   ExclamationCircleOutlined,
   WarningOutlined,
-  ClearOutlined
+  ClearOutlined,
+  ThunderboltOutlined
 } from '@ant-design/icons-vue'
 import { frameApi } from '@/api'
 import request from '@/api/request'
@@ -388,6 +441,8 @@ const stats = ref({
     memory_usage_mb: 0,
     cpu_cores: 0
   },
+  frames_per_sec: 0, // 每秒抽帧数量
+  total_frames: 0,    // 总抽帧数量
   updated_at: new Date()
 })
 
@@ -402,7 +457,9 @@ const inferenceStats = ref({
   avg_inference_ms: 0,
   max_inference_ms: 0,
   total_inferences: 0,
+  success_inferences: 0,
   failed_inferences: 0,
+  success_rate_per_sec: 0, // 每秒推理成功数
   updated_at: ''
 })
 

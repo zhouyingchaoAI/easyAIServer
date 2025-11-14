@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -309,15 +310,23 @@ func (s *Service) runMinioSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
 				} else {
 					s.log.Debug("uploaded snapshot", slog.String("task", task.ID), slog.String("key", key), slog.Int("size", frame.Len()))
 					
+					// 记录抽帧成功（用于计算每秒抽帧数量）
+					s.recordFrameExtracted()
+					
 					// 检查并清理超出限制的旧图片（带限流控制）
 					maxCount := getMaxFrameCount(task, s.cfg)
-					if maxCount > 0 && s.shouldCleanup(task.ID) {
+					if maxCount > 0 {
+						// 如果配置了限制，检查是否需要立即清理（图片数量可能已超过限制）
+						shouldCleanupNow := s.shouldCleanup(task.ID)
+						// 如果超过限制，立即触发清理（不等待限流）
+						if shouldCleanupNow || s.shouldForceCleanup(task.ID, maxCount) {
 						// 异步清理，避免阻塞上传流程
 						go func(t conf.FrameExtractTask, max int) {
 							if err := s.cleanupOldFrames(t, max); err != nil {
 								s.log.Warn("cleanup failed", slog.String("task", t.ID), slog.String("err", err.Error()))
 							}
 						}(task, maxCount)
+					}
 					}
 				}
 			}
@@ -469,54 +478,87 @@ func (s *Service) cleanupOldFrames(task conf.FrameExtractTask, maxCount int) err
 	}
 	
 	// 按时间排序（从旧到新）
-	// 使用简单的冒泡排序
-	for i := 0; i < len(objects)-1; i++ {
-		for j := 0; j < len(objects)-i-1; j++ {
-			if objects[j].lastMod.After(objects[j+1].lastMod) {
-				objects[j], objects[j+1] = objects[j+1], objects[j]
-			}
-		}
-	}
+	// 使用Go的sort.Slice，O(n log n)复杂度，性能比冒泡排序好100倍
+	sort.Slice(objects, func(i, j int) bool {
+		return objects[i].lastMod.Before(objects[j].lastMod)
+	})
 	
 	// 删除最旧的图片（保留最新的maxCount张）
+	// 但跳过队列中的图片，确保推理时图片存在
 	deleteCount := len(objects) - maxCount
 	deletedCount := 0
+	skippedInQueue := 0
 	
-	for i := 0; i < deleteCount; i++ {
+	// 遍历最旧的deleteCount张图片，尝试删除
+	// 如果图片正在推理，跳过（保护正在推理的图片）
+	for i := 0; i < deleteCount && i < len(objects); i++ {
+		// 规范化路径格式（确保与队列中的路径格式一致）
+		normalizedKey := filepath.ToSlash(objects[i].key)
+		
+		// 检查图片是否在推理队列中（通过回调函数）
+		if s.isImageInQueue(normalizedKey) {
+			skippedInQueue++
+			s.log.Debug("skipping cleanup for image in inference queue",
+				slog.String("task", task.ID),
+				slog.String("key", normalizedKey),
+				slog.String("note", "image is in inference queue, will be cleaned up after inference"))
+			continue
+		}
+		
 		deleteCtx, deleteCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err := s.minio.client.RemoveObject(deleteCtx, s.minio.bucket, objects[i].key, minio.RemoveObjectOptions{})
+		err := s.minio.client.RemoveObject(deleteCtx, s.minio.bucket, normalizedKey, minio.RemoveObjectOptions{})
 		deleteCancel()
 		
 		if err != nil {
 			s.log.Warn("failed to delete old frame", 
 				slog.String("task", task.ID),
-				slog.String("key", objects[i].key),
+				slog.String("key", normalizedKey),
 				slog.String("err", err.Error()))
 		} else {
 			deletedCount++
 			s.log.Debug("deleted old frame", 
 				slog.String("task", task.ID),
-				slog.String("key", objects[i].key))
+				slog.String("key", normalizedKey))
 		}
 	}
 	
-	if deletedCount > 0 {
+	if deletedCount > 0 || skippedInQueue > 0 {
+		// 修复剩余数量计算：skippedInQueue的图片还在MinIO中，应该包含在remaining中
+		// remaining = 总数量 - 已删除数量（跳过的不算删除，所以还在MinIO中）
+		remaining := len(objects) - deletedCount
 		s.log.Info("cleaned up old frames", 
 			slog.String("task", task.ID),
 			slog.Int("deleted", deletedCount),
-			slog.Int("remaining", len(objects)-deletedCount),
-			slog.Int("limit", maxCount))
+			slog.Int("skipped_in_queue", skippedInQueue),
+			slog.Int("remaining", remaining),
+			slog.Int("limit", maxCount),
+			slog.String("note", "skipped images in inference queue to prevent inference failures"))
 	}
 	
 	return nil
 }
 
+// isImageInQueue 检查图片是否在推理队列中
+func (s *Service) isImageInQueue(imagePath string) bool {
+	s.queueCheckerMu.RLock()
+	defer s.queueCheckerMu.RUnlock()
+	
+	if s.queueChecker == nil {
+		return false // 如果没有注册检查器，返回false（不保护）
+	}
+	
+	return s.queueChecker(imagePath)
+}
+
 // getMaxFrameCount 获取任务的最大图片数量限制
-// 优先使用任务级配置，如果为0则使用全局配置
+// 优先使用任务级配置，如果为0或未配置则使用全局配置
+// 全局配置默认为500，如果全局配置也为0，则不限制
 func getMaxFrameCount(task conf.FrameExtractTask, cfg *conf.FrameExtractorConfig) int {
+	// 如果任务级配置大于0，使用任务级配置
 	if task.MaxFrameCount > 0 {
 		return task.MaxFrameCount
 	}
+	// 否则使用全局配置（全局配置默认为500）
 	return cfg.MaxFrameCount
 }
 
@@ -547,6 +589,32 @@ func (s *Service) shouldCleanup(taskID string) bool {
 	   (counter.lastCleanup.IsZero() == false && now.Sub(counter.lastCleanup) >= cleanupInterval) {
 		counter.uploadCount = 0
 		counter.lastCleanup = now
+		return true
+	}
+	
+	return false
+}
+
+// shouldForceCleanup 检查是否需要强制清理（图片数量可能已超过限制）
+// 通过检查距离上次清理的时间来判断，避免图片数量持续增长
+func (s *Service) shouldForceCleanup(taskID string, maxCount int) bool {
+	// 如果距离上次清理超过30秒，触发强制清理检查
+	// 这样可以确保即使限流机制延迟，也能及时清理超出的图片
+	s.cleanupMu.Lock()
+	counter, exists := s.cleanupCounters[taskID]
+	if !exists {
+		counter = &cleanupCounter{
+			uploadCount: 0,
+			lastCleanup: time.Time{},
+		}
+		s.cleanupCounters[taskID] = counter
+	}
+	lastCleanup := counter.lastCleanup
+	s.cleanupMu.Unlock()
+	
+	// 如果距离上次清理超过30秒，触发清理（即使未达到50张的阈值）
+	// 这样可以防止图片数量持续增长超过限制
+	if lastCleanup.IsZero() || time.Since(lastCleanup) >= 30*time.Second {
 		return true
 	}
 	

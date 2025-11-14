@@ -11,6 +11,7 @@ type PerformanceMonitor struct {
 	// 统计数据
 	totalInferences    int64
 	failedInferences   int64  // 失败次数
+	successInferences  int64  // 成功次数（只统计成功的推理）
 	totalInferenceTime int64  // 毫秒
 	avgInferenceTime   float64 // 毫秒
 	maxInferenceTime   int64  // 最大推理时间
@@ -18,7 +19,11 @@ type PerformanceMonitor struct {
 	// 速率统计
 	frameRate      float64 // 抽帧速率（张/秒）
 	inferenceRate  float64 // 推理速率（张/秒）
+	successRatePerSec float64 // 每秒推理成功数（张/秒）
 	lastUpdateTime time.Time
+	lastSuccessTime time.Time // 上次成功推理时间（用于计算每秒成功数）
+	successCountInWindow int64 // 窗口内的成功推理数
+	windowStartTime time.Time // 窗口开始时间
 	
 	// 慢推理告警
 	slowThresholdMs int64
@@ -41,9 +46,12 @@ func NewPerformanceMonitor(slowThresholdMs int64, logger *slog.Logger) *Performa
 		slowThresholdMs = 5000  // 默认5秒
 	}
 	
+	now := time.Now()
 	return &PerformanceMonitor{
 		slowThresholdMs: slowThresholdMs,
-		lastUpdateTime:  time.Now(),
+		lastUpdateTime:  now,
+		lastSuccessTime: now,
+		windowStartTime: now,
 		log:             logger,
 	}
 }
@@ -64,6 +72,7 @@ func (m *PerformanceMonitor) RecordInference(inferenceTimeMs int64, success bool
 	}
 	
 	m.totalInferences++
+	m.successInferences++
 	m.totalInferenceTime += inferenceTimeMs
 	m.avgInferenceTime = float64(m.totalInferenceTime) / float64(m.totalInferences)
 	
@@ -72,8 +81,26 @@ func (m *PerformanceMonitor) RecordInference(inferenceTimeMs int64, success bool
 		m.maxInferenceTime = inferenceTimeMs
 	}
 	
-	// 更新推理速率（每分钟更新一次）
+	// 更新每秒推理成功数（使用滑动窗口，每秒更新一次）
 	now := time.Now()
+	m.successCountInWindow++
+	
+	// 计算窗口内的每秒成功数（使用最近1秒的数据）
+	windowDuration := now.Sub(m.windowStartTime).Seconds()
+	if windowDuration >= 1.0 {
+		// 窗口已满1秒，计算每秒成功数
+		m.successRatePerSec = float64(m.successCountInWindow) / windowDuration
+		// 重置窗口
+		m.successCountInWindow = 0
+		m.windowStartTime = now
+	} else if windowDuration > 0 {
+		// 窗口未满1秒，使用当前数据估算
+		m.successRatePerSec = float64(m.successCountInWindow) / windowDuration
+	}
+	
+	m.lastSuccessTime = now
+	
+	// 更新推理速率（每分钟更新一次）
 	if now.Sub(m.lastUpdateTime) > 60*time.Second {
 		duration := now.Sub(m.lastUpdateTime).Seconds()
 		m.inferenceRate = float64(m.totalInferences) / duration
@@ -81,7 +108,8 @@ func (m *PerformanceMonitor) RecordInference(inferenceTimeMs int64, success bool
 		
 		m.log.Info("performance updated",
 			slog.Float64("avg_inference_ms", m.avgInferenceTime),
-			slog.Float64("inference_rate", m.inferenceRate))
+			slog.Float64("inference_rate", m.inferenceRate),
+			slog.Float64("success_rate_per_sec", m.successRatePerSec))
 	}
 	
 	// 检查慢推理
@@ -167,13 +195,27 @@ func (m *PerformanceMonitor) GetStats() map[string]interface{} {
 		inferPerSec = 1000.0 / m.avgInferenceTime
 	}
 	
+	// 计算实时每秒成功数（如果窗口未满1秒，使用当前数据估算）
+	now := time.Now()
+	windowDuration := now.Sub(m.windowStartTime).Seconds()
+	currentSuccessRate := m.successRatePerSec
+	if windowDuration > 0 && windowDuration < 1.0 {
+		// 窗口未满1秒，使用当前数据估算
+		currentSuccessRate = float64(m.successCountInWindow) / windowDuration
+	} else if windowDuration >= 1.0 {
+		// 窗口已满，使用已计算的速率
+		currentSuccessRate = m.successRatePerSec
+	}
+	
 	return map[string]interface{}{
 		"total_count":         m.totalInferences,
+		"success_count":       m.successInferences,
 		"failed_count":        m.failedInferences,
 		"total_inference_time": m.totalInferenceTime,
 		"avg_inference_ms":    m.avgInferenceTime,
 		"max_inference_ms":    m.maxInferenceTime,
 		"inference_per_sec":   inferPerSec,
+		"success_rate_per_sec": currentSuccessRate, // 每秒推理成功数
 		"slow_count":          m.slowCount,
 		"slow_threshold_ms":   m.slowThresholdMs,
 	}
@@ -184,13 +226,19 @@ func (m *PerformanceMonitor) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	
+	now := time.Now()
 	m.totalInferences = 0
 	m.failedInferences = 0
+	m.successInferences = 0
 	m.totalInferenceTime = 0
 	m.avgInferenceTime = 0
 	m.maxInferenceTime = 0
 	m.slowCount = 0
-	m.lastUpdateTime = time.Now()
+	m.lastUpdateTime = now
+	m.lastSuccessTime = now
+	m.windowStartTime = now
+	m.successCountInWindow = 0
+	m.successRatePerSec = 0
 	m.lastSlowAlert = time.Time{}
 	
 	m.log.Info("performance monitor stats reset")

@@ -324,7 +324,7 @@ type FrameExtractTask struct {
     Enabled      bool   `json:"enabled" mapstructure:"enabled"` // task running state
     ConfigStatus string `json:"config_status" mapstructure:"config_status"` // 配置状态: "unconfigured" | "configured"
     PreviewImage string `json:"preview_image" mapstructure:"preview_image"` // 预览图片路径
-    MaxFrameCount int   `json:"max_frame_count" mapstructure:"max_frame_count"` // 最大抽帧图片数量（0表示使用全局配置）
+    MaxFrameCount int   `json:"max_frame_count" mapstructure:"max_frame_count"` // 最大抽帧图片数量（0或未配置时使用全局配置）
 }
 type RecordConfig struct {
 	EnableFlv            bool   `json:"enable_flv"`
@@ -439,8 +439,8 @@ func (s *Bootstrap) Key() string {
 
 // AIAnalysisConfig 智能分析插件配置
 type AIAnalysisConfig struct {
-	Enable              bool   `json:"enable" mapstructure:"enable"`
-	ScanIntervalSec     int    `json:"scan_interval_sec" mapstructure:"scan_interval_sec"`
+	Enable              bool    `json:"enable" mapstructure:"enable"`
+	ScanIntervalSec     float64 `json:"scan_interval_sec" mapstructure:"scan_interval_sec"` // 支持小数，如0.2秒
 	MQType              string `json:"mq_type" mapstructure:"mq_type"` // kafka|rabbitmq
 	MQAddress           string `json:"mq_address" mapstructure:"mq_address"`
 	MQTopic             string `json:"mq_topic" mapstructure:"mq_topic"`

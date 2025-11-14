@@ -3,6 +3,7 @@ package aianalysis
 import (
 	"context"
 	"log/slog"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -21,11 +22,12 @@ const (
 // InferenceQueue 智能推理队列
 type InferenceQueue struct {
 	images           []ImageInfo
+	imageSet         map[string]bool // 用于快速检查图片是否已在队列中（path -> bool）
 	maxSize          int
 	strategy         QueueStrategy
 	mu               sync.RWMutex
 	droppedCount     int64
-	processedCount   int64
+	processedCount   int64 // 已处理的图片数量（包括成功和失败的推理）
 	lastAlertTime    time.Time
 	alertThreshold   int
 	alertInterval    time.Duration
@@ -57,6 +59,7 @@ func NewInferenceQueue(maxSize int, strategy QueueStrategy, alertThreshold int, 
 	
 	return &InferenceQueue{
 		images:         make([]ImageInfo, 0, maxSize),
+		imageSet:       make(map[string]bool),
 		maxSize:        maxSize,
 		strategy:       strategy,
 		alertThreshold: alertThreshold,
@@ -79,13 +82,26 @@ func (q *InferenceQueue) Add(images []ImageInfo) int {
 	defer q.mu.Unlock()
 	
 	added := 0
+	duplicateCount := 0
 	for _, img := range images {
+		// 规范化路径格式（确保与MinIO key格式一致）
+		normalizedPath := filepath.ToSlash(img.Path)
+		
+		// 检查图片是否已在队列中（去重）
+		if q.imageSet[normalizedPath] {
+			duplicateCount++
+			continue
+		}
+		
 		// 检查队列是否已满
 		if len(q.images) >= q.maxSize {
 			switch q.strategy {
 			case StrategyDropOldest:
 				// 丢弃最旧的
 				dropped := q.images[0]
+				// 从imageSet中移除（规范化路径）
+				normalizedDroppedPath := filepath.ToSlash(dropped.Path)
+				delete(q.imageSet, normalizedDroppedPath)
 				q.images = q.images[1:]
 				q.droppedCount++
 				
@@ -119,6 +135,8 @@ func (q *InferenceQueue) Add(images []ImageInfo) int {
 				oldImages := make([]ImageInfo, len(q.images))
 				copy(oldImages, q.images)
 				oldLen := len(q.images)
+				// 清空imageSet
+				q.imageSet = make(map[string]bool)
 				q.images = q.images[:0]
 				q.droppedCount += int64(oldLen)
 				
@@ -134,8 +152,18 @@ func (q *InferenceQueue) Add(images []ImageInfo) int {
 			}
 		}
 		
+		// 添加到队列和imageSet（使用规范化路径）
 		q.images = append(q.images, img)
+		q.imageSet[normalizedPath] = true
 		added++
+	}
+	
+	// 如果发现重复图片，记录日志
+	if duplicateCount > 0 {
+		q.log.Warn("duplicate images detected and skipped",
+			slog.Int("duplicate_count", duplicateCount),
+			slog.Int("added_count", added),
+			slog.String("note", "images already in queue, preventing duplicate processing"))
 	}
 	
 	// 检查积压告警
@@ -154,8 +182,12 @@ func (q *InferenceQueue) Pop() (ImageInfo, bool) {
 	}
 	
 	img := q.images[0]
+	// 从imageSet中移除（规范化路径）
+	normalizedPath := filepath.ToSlash(img.Path)
+	delete(q.imageSet, normalizedPath)
 	q.images = q.images[1:]
-	q.processedCount++
+	// 注意：不在Pop时增加processedCount，只在推理成功或失败后增加
+	// 这样可以确保processedCount更准确地反映实际推理的数量
 	
 	return img, true
 }
@@ -175,8 +207,13 @@ func (q *InferenceQueue) PopBatch(n int) []ImageInfo {
 	
 	batch := make([]ImageInfo, n)
 	copy(batch, q.images[:n])
+	// 从imageSet中移除
+	for i := 0; i < n; i++ {
+		delete(q.imageSet, q.images[i].Path)
+	}
 	q.images = q.images[n:]
-	q.processedCount += int64(n)
+	// 注意：不在PopBatch时增加processedCount，只在推理成功或失败后增加
+	// 这样可以确保processedCount更准确地反映实际推理的数量
 	
 	return batch
 }
@@ -188,6 +225,28 @@ func (q *InferenceQueue) Size() int {
 	return len(q.images)
 }
 
+// GetImagePaths 获取队列中所有图片的路径集合（用于清理时排除）
+func (q *InferenceQueue) GetImagePaths() map[string]bool {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	
+	// 返回imageSet的副本，避免外部修改
+	paths := make(map[string]bool, len(q.imageSet))
+	for path := range q.imageSet {
+		paths[path] = true
+	}
+	return paths
+}
+
+// Contains 检查图片是否在队列中
+func (q *InferenceQueue) Contains(imagePath string) bool {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	// 规范化路径格式（确保与MinIO key格式一致）
+	normalizedPath := filepath.ToSlash(imagePath)
+	return q.imageSet[normalizedPath]
+}
+
 // Clear 清空队列
 func (q *InferenceQueue) Clear() int {
 	q.mu.Lock()
@@ -195,7 +254,15 @@ func (q *InferenceQueue) Clear() int {
 	
 	cleared := len(q.images)
 	q.images = q.images[:0]
+	q.imageSet = make(map[string]bool)
 	return cleared
+}
+
+// RecordProcessed 记录一次处理（推理成功或失败后调用）
+func (q *InferenceQueue) RecordProcessed() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.processedCount++
 }
 
 // checkBacklogAlertLocked 检查积压告警（需要已加锁）

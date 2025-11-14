@@ -19,7 +19,8 @@ type Service struct {
 	cfg              *conf.AIAnalysisConfig
 	fxCfg            *conf.FrameExtractorConfig // Frame Extractor配置
 	registry         *AlgorithmRegistry
-	scanner          *Scanner
+	scanner          *Scanner          // 保留用于兼容（可选，用于初始扫描）
+	eventListener    *EventListener   // 事件监听器（替代扫描器）
 	scheduler        *Scheduler
 	mq               MessageQueue
 	queue            *InferenceQueue            // 智能队列
@@ -165,7 +166,10 @@ func (s *Service) Start() error {
 	)
 	s.alertBatchWriter.Start()
 	
-	// 初始化扫描器
+	// 初始化事件监听器（替代扫描器，使用MinIO事件通知）
+	s.eventListener = NewEventListener(minioClient, s.fxCfg.MinIO.Bucket, s.fxCfg.MinIO.BasePath, alertBasePath, s.log)
+	
+	// 保留扫描器用于兼容（可选，用于初始扫描或降级）
 	s.scanner = NewScanner(minioClient, s.fxCfg.MinIO.Bucket, s.fxCfg.MinIO.BasePath, alertBasePath, s.log)
 	
 	// 初始化调度器
@@ -206,32 +210,67 @@ func (s *Service) Start() error {
 
 // startSmartInferenceLoop 启动智能推理循环
 func (s *Service) startSmartInferenceLoop() {
-	// 启动扫描器
-	s.scanner.Start(s.cfg.ScanIntervalSec, func(images []ImageInfo) {
-		// 添加到智能队列（Add方法内部会去重）
-		queueAddStart := time.Now()
-		added := s.queue.Add(images)
-		queueAddDuration := time.Since(queueAddStart)
-		
-		if added > 0 {
-			s.log.Info("images added to queue",
-				slog.Int("added", added),
-				slog.Int("queue_size", s.queue.Size()),
-				slog.Duration("queue_add_duration_ms", queueAddDuration))
+	// 启动事件监听器（替代定时扫描）
+	s.eventListener.Start(
+		// 新图片回调
+		func(img ImageInfo) {
+			// 添加到智能队列（Add方法内部会去重）
+			queueAddStart := time.Now()
+			added := s.queue.Add([]ImageInfo{img})
+			queueAddDuration := time.Since(queueAddStart)
 			
-			// 立即标记已加入队列的图片为已处理，防止重复扫描
-			// 注意：由于队列Add方法已经去重，这里需要检查哪些图片真正加入了队列
-			// 但由于队列去重是在Add方法内部完成的，我们无法直接获取去重后的列表
-			// 因此，我们标记所有传入的图片，如果图片已在队列中，说明之前已经标记过了
-			// 重复标记不会造成问题，只是会更新标记时间
+			if added > 0 {
+				s.log.Info("image added to queue via event",
+					slog.String("path", img.Path),
+					slog.String("task_type", img.TaskType),
+					slog.String("task_id", img.TaskID),
+					slog.Int("queue_size", s.queue.Size()),
+					slog.Duration("queue_add_duration_ms", queueAddDuration))
+			} else {
+				s.log.Debug("image skipped (duplicate or queue full)",
+					slog.String("path", img.Path))
+			}
+		},
+		// 图片删除回调
+		func(imagePath string) {
+			// 从队列中移除已删除的图片
+			removed := s.queue.Remove(imagePath)
+			if removed {
+				s.log.Info("image removed from queue (deleted from MinIO)",
+					slog.String("path", imagePath),
+					slog.Int("remaining_queue_size", s.queue.Size()))
+			}
+		},
+	)
+	
+	// 可选：执行一次初始扫描，处理启动前已存在的图片
+	// 注意：这可能导致重复处理，但可以确保不遗漏启动前的图片
+	// 如果不需要，可以注释掉这部分代码
+	go func() {
+		time.Sleep(2 * time.Second) // 等待事件监听器启动
+		s.log.Info("performing initial scan for existing images")
+		s.scanner.Start(s.cfg.ScanIntervalSec, func(images []ImageInfo) {
+			// 只执行一次扫描
+			queueAddStart := time.Now()
+			added := s.queue.Add(images)
+			queueAddDuration := time.Since(queueAddStart)
+			
+			if added > 0 {
+				s.log.Info("initial scan: images added to queue",
+					slog.Int("added", added),
+					slog.Int("queue_size", s.queue.Size()),
+					slog.Duration("queue_add_duration_ms", queueAddDuration))
+			}
+			
+			// 标记已处理
 			for _, img := range images {
 				s.scanner.MarkProcessed(img.Path)
 			}
-		}
-		
-		// 注意：图片在加入队列时立即标记为已处理，防止重复扫描
-		// 如果推理失败，scheduler会在失败时删除图片并标记为已处理
-	})
+			
+			// 停止扫描器（只执行一次）
+			s.scanner.Stop()
+		})
+	}()
 	
 	// 启动多个推理处理worker以提升并发处理能力
 	workerCount := s.cfg.MaxConcurrentInfer
@@ -352,6 +391,9 @@ func (s *Service) periodicStatsLoop() {
 func (s *Service) Stop() error {
 	s.log.Info("stopping AI analysis plugin")
 
+	if s.eventListener != nil {
+		s.eventListener.Stop()
+	}
 	if s.scanner != nil {
 		s.scanner.Stop()
 	}

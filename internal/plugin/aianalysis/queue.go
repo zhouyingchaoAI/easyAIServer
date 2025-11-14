@@ -299,6 +299,36 @@ func (q *InferenceQueue) checkBacklogAlertLocked() {
 	}
 }
 
+// Remove 从队列中移除指定路径的图片
+func (q *InferenceQueue) Remove(imagePath string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	
+	// 规范化路径格式
+	normalizedPath := filepath.ToSlash(imagePath)
+	
+	// 检查图片是否在队列中
+	if !q.imageSet[normalizedPath] {
+		return false
+	}
+	
+	// 从队列中查找并移除
+	for i, img := range q.images {
+		if filepath.ToSlash(img.Path) == normalizedPath {
+			// 从imageSet中移除
+			delete(q.imageSet, normalizedPath)
+			// 从队列中移除
+			q.images = append(q.images[:i], q.images[i+1:]...)
+			q.log.Debug("removed image from queue",
+				slog.String("path", imagePath),
+				slog.Int("remaining_queue_size", len(q.images)))
+			return true
+		}
+	}
+	
+	return false
+}
+
 // GetStats 获取统计信息
 func (q *InferenceQueue) GetStats() map[string]interface{} {
 	q.mu.RLock()

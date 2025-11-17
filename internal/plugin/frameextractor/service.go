@@ -92,6 +92,21 @@ func (s *Service) recordFrameExtracted() {
 	}
 }
 
+// ResetFrameStats 重置抽帧统计数据
+func (s *Service) ResetFrameStats() {
+	s.frameRateMu.Lock()
+	defer s.frameRateMu.Unlock()
+	
+	now := time.Now()
+	s.frameRateStats.countInWindow = 0
+	s.frameRateStats.totalFrames = 0
+	s.frameRateStats.framesPerSec = 0
+	s.frameRateStats.windowStartTime = now
+	s.frameRateStats.lastFrameTime = time.Time{}
+	
+	s.log.Info("frame extraction statistics reset")
+}
+
 // TaskStats 任务统计信息
 type TaskStats struct {
     TotalTasks      int                `json:"total_tasks"`       // 总任务数
@@ -353,12 +368,68 @@ func (s *Service) RemoveTask(id string) bool {
 }
 
 // ListTasks returns current tasks
+// 如果使用MinIO存储，会检查每个任务是否有preview图片
 func (s *Service) ListTasks() []conf.FrameExtractTask {
     s.mu.Lock()
-    defer s.mu.Unlock()
     out := make([]conf.FrameExtractTask, len(s.cfg.Tasks))
     copy(out, s.cfg.Tasks)
+    s.mu.Unlock()
+    
+    // 如果使用MinIO存储，检查每个任务的preview图片
+    if s.cfg.Store == "minio" && s.minio != nil {
+        for i := range out {
+            task := &out[i]
+            // 如果配置中没有preview_image，尝试从MinIO查找
+            if task.PreviewImage == "" {
+                previewPath := s.findPreviewImageInMinIO(task)
+                if previewPath != "" {
+                    task.PreviewImage = previewPath
+                }
+            }
+        }
+    }
+    
     return out
+}
+
+// findPreviewImageInMinIO 在MinIO中查找任务的preview图片
+func (s *Service) findPreviewImageInMinIO(task *conf.FrameExtractTask) string {
+    if s.minio == nil {
+        return ""
+    }
+    
+    taskType := task.TaskType
+    if taskType == "" {
+        taskType = "未分类"
+    }
+    
+    // 构建任务路径前缀
+    prefix := filepath.ToSlash(filepath.Join(s.minio.base, taskType, task.ID)) + "/"
+    
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+    
+    // 列举该任务目录下的所有文件
+    objectCh := s.minio.client.ListObjects(ctx, s.minio.bucket, minio.ListObjectsOptions{
+        Prefix:    prefix,
+        Recursive: false,
+    })
+    
+    // 查找preview_开头的图片
+    for object := range objectCh {
+        if object.Err != nil {
+            continue
+        }
+        
+        name := filepath.Base(object.Key)
+        // 检查是否是preview图片
+        if strings.HasPrefix(name, "preview_") && 
+           (strings.HasSuffix(strings.ToLower(name), ".jpg") || strings.HasSuffix(strings.ToLower(name), ".jpeg")) {
+            return object.Key
+        }
+    }
+    
+    return ""
 }
 
 // GetConfig returns current config

@@ -194,7 +194,7 @@ enable = true
 interval_ms = 1000
 output_dir = './snapshots'
 store = 'minio'
-max_frame_count = 200  # 全局默认最大图片数量，0表示不限制
+max_frame_count = 1000  # 全局默认最大图片数量，0表示不限制
 task_types = ['人数统计', '绊线人数统计', '人员跌倒', '人员离岗', '吸烟检测', '区域入侵', '徘徊检测', '物品遗留', '安全帽检测']
 
 [frame_extractor.minio]

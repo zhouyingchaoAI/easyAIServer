@@ -79,12 +79,7 @@ func (s *Service) Start() error {
 		s.log.Info("MinIO 诊断通过，连接正常")
 	}
 
-	// 初始化消息队列
-	if err := s.initMessageQueue(); err != nil {
-		return fmt.Errorf("failed to init message queue: %w", err)
-	}
-
-	// 初始化注册中心
+	// 初始化注册中心（优先初始化，确保注册功能可用）
 	s.registry = NewRegistry(s.cfg.HeartbeatTimeoutSec, s.log)
 	s.registry.StartHeartbeatChecker()
 	
@@ -93,6 +88,14 @@ func (s *Service) Start() error {
 	
 	// 设置注销回调：算法服务下线时记录日志
 	s.registry.SetOnUnregisterCallback(s.onAlgorithmServiceUnregistered)
+
+	// 初始化消息队列（如果失败，记录警告但不阻止启动）
+	if err := s.initMessageQueue(); err != nil {
+		s.log.Warn("failed to init message queue, continuing without MQ",
+			slog.String("error", err.Error()),
+			slog.String("note", "algorithm service registration will still work, but alerts will not be pushed to MQ"))
+		// 不返回错误，允许服务继续启动（注册功能不依赖消息队列）
+	}
 
 	// 初始化智能队列
 	maxQueueSize := s.cfg.MaxQueueSize
@@ -186,17 +189,23 @@ func (s *Service) Start() error {
 	// 设置全局实例
 	globalService = s
 	
-	// 注册图片检查器到Frame Extractor，只保护正在推理的图片（不保护队列中等待的）
-	// 这样可以避免队列积压导致清理失效，同时确保正在推理的图片不会被清理
+	// 注册图片检查器到Frame Extractor，保护正在推理的图片和队列中等待的图片
+	// 这样可以确保所有待处理的图片都不会被清理
 	fxService := frameextractor.GetGlobal()
 	if fxService != nil {
 		fxService.SetQueueChecker(func(imagePath string) bool {
-			// 只保护正在推理的图片，不保护队列中等待的图片
-			// 这样可以避免队列积压导致清理失效
-			return s.scheduler.IsImageInferring(imagePath)
+			// 保护正在推理的图片
+			if s.scheduler.IsImageInferring(imagePath) {
+				return true
+			}
+			// 保护队列中等待的图片
+			if s.queue.Contains(imagePath) {
+				return true
+			}
+			return false
 		})
 		s.log.Info("image checker registered to frame extractor",
-			slog.String("note", "only images currently being inferred will be protected from cleanup, not images waiting in queue"))
+			slog.String("note", "protecting both images currently being inferred and images waiting in queue"))
 	}
 
 	s.log.Info("AI analysis plugin started successfully",
@@ -249,19 +258,19 @@ func (s *Service) startSmartInferenceLoop() {
 	go func() {
 		time.Sleep(2 * time.Second) // 等待事件监听器启动
 		s.log.Info("performing initial scan for existing images")
-		s.scanner.Start(s.cfg.ScanIntervalSec, func(images []ImageInfo) {
+	s.scanner.Start(s.cfg.ScanIntervalSec, func(images []ImageInfo) {
 			// 只执行一次扫描
 			queueAddStart := time.Now()
-			added := s.queue.Add(images)
+		added := s.queue.Add(images)
 			queueAddDuration := time.Since(queueAddStart)
-			
-			if added > 0 {
+		
+		if added > 0 {
 				s.log.Info("initial scan: images added to queue",
-					slog.Int("added", added),
+				slog.Int("added", added),
 					slog.Int("queue_size", s.queue.Size()),
 					slog.Duration("queue_add_duration_ms", queueAddDuration))
-			}
-			
+		}
+		
 			// 标记已处理
 			for _, img := range images {
 				s.scanner.MarkProcessed(img.Path)
@@ -317,8 +326,8 @@ func (s *Service) inferenceProcessLoop() {
 		emptyQueueCount = 0
 		
 		// 在调度推理前，先检查图片是否还存在（避免处理已被清理的图片）
-		// 注意：由于现在队列中等待的图片不再保护，可能在等待时被清理
-		// 所以在Pop后、调度前检查，如果不存在，跳过处理
+		// 注意：现在队列中的图片已被保护，但为了安全起见仍然检查
+		// 如果图片不存在，可能是被其他原因删除的
 		exists, statErr := s.scheduler.CheckImageExists(img.Path)
 		
 		if statErr != nil || !exists {
@@ -338,19 +347,23 @@ func (s *Service) inferenceProcessLoop() {
 			continue
 		}
 		
-		// 调度推理（推理时间已在 Scheduler 中记录到监控器）
+		// 调度推理（异步执行，不阻塞worker，让worker可以继续处理下一张图片）
 		// 注意：processedCount会在推理成功或失败后通过回调自动增加
-		scheduleStart := time.Now()
-		s.scheduler.ScheduleInference(img)
-		totalDuration := time.Since(scheduleStart)
+		// 使用goroutine异步执行，提高并发处理能力
+		go func(image ImageInfo) {
+			scheduleStart := time.Now()
+			s.scheduler.ScheduleInference(image)
+			totalDuration := time.Since(scheduleStart)
+			
+			// 记录调度耗时（仅在Debug级别，避免日志过多）
+			s.log.Debug("inference scheduled (async)",
+				slog.String("task_id", image.TaskID),
+				slog.String("image", image.Filename),
+				slog.Duration("schedule_duration_ms", totalDuration))
+		}(img)
 		
-		// 记录worker处理耗时（包含调度和推理）
-		// Debug级别，避免日志过多
-		s.log.Debug("worker processed image",
-			slog.String("task_id", img.TaskID),
-			slog.String("image", img.Filename),
-			slog.Duration("pop_duration_ms", popDuration),
-			slog.Duration("total_process_duration_ms", totalDuration))
+		// 注意：worker不再等待推理完成，立即处理下一张图片
+		// 这样可以大幅提高吞吐量，充分利用300个worker的并发能力
 	}
 }
 
@@ -513,6 +526,13 @@ func (s *Service) ResetInferenceStats() error {
 	
 	s.queue.ResetStats()
 	s.monitor.Reset()
+	
+	// 同时重置抽帧统计数据
+	fxService := frameextractor.GetGlobal()
+	if fxService != nil {
+		fxService.ResetFrameStats()
+		s.log.Info("frame extraction statistics also reset")
+	}
 	
 	s.log.Info("inference statistics reset by user request")
 	

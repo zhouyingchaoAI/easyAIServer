@@ -58,6 +58,14 @@ export default {
   // 获取监控统计
   getStats(){
     return request({ url: '/frame_extractor/stats', method: 'get' });
+  },
+  // 批量启动所有任务
+  batchStartTasks(){
+    return request({ url: '/frame_extractor/tasks/batch/start', method: 'post' });
+  },
+  // 批量停止所有任务
+  batchStopTasks(){
+    return request({ url: '/frame_extractor/tasks/batch/stop', method: 'post' });
   }
 }
 

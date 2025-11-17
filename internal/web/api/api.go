@@ -147,6 +147,60 @@ func registerApp(g gin.IRouter) {
         ok := fx.RemoveTask(id)
         c.JSON(200, gin.H{"ok": ok})
     })
+    // 批量启动所有任务
+    fem.POST("/tasks/batch/start", func(c *gin.Context) {
+        fx := frameextractor.GetGlobal()
+        if fx == nil {
+            c.JSON(500, gin.H{"error": "service not ready"})
+            return
+        }
+        tasks := fx.ListTasks()
+        successCount := 0
+        failedCount := 0
+        for _, task := range tasks {
+            if !task.Enabled {
+                if err := fx.StartTaskByID(task.ID); err != nil {
+                    failedCount++
+                    slog.Warn("failed to start task", slog.String("task_id", task.ID), slog.String("err", err.Error()))
+                } else {
+                    successCount++
+                }
+            }
+        }
+        c.JSON(200, gin.H{
+            "ok": true,
+            "success_count": successCount,
+            "failed_count": failedCount,
+            "total": len(tasks),
+        })
+    })
+    // 批量停止所有任务
+    fem.POST("/tasks/batch/stop", func(c *gin.Context) {
+        fx := frameextractor.GetGlobal()
+        if fx == nil {
+            c.JSON(500, gin.H{"error": "service not ready"})
+            return
+        }
+        tasks := fx.ListTasks()
+        successCount := 0
+        failedCount := 0
+        for _, task := range tasks {
+            if task.Enabled {
+                if err := fx.StopTaskByID(task.ID); err != nil {
+                    failedCount++
+                    slog.Warn("failed to stop task", slog.String("task_id", task.ID), slog.String("err", err.Error()))
+                } else {
+                    successCount++
+                }
+            }
+        }
+        c.JSON(200, gin.H{
+            "ok": true,
+            "success_count": successCount,
+            "failed_count": failedCount,
+            "total": len(tasks),
+        })
+    })
 	// list snapshots for a task
 	fem.GET("/snapshots/:task_id", func(c *gin.Context) {
 		taskID := c.Param("task_id")

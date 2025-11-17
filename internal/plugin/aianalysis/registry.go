@@ -83,6 +83,13 @@ func (r *AlgorithmRegistry) Register(service conf.AlgorithmService) error {
 	for _, taskType := range service.TaskTypes {
 		// 移除相同endpoint的旧服务（按endpoint去重）
 		removed := r.removeServiceByEndpointLocked(service.Endpoint, taskType)
+		if removed {
+			r.log.Info("removed duplicate service by endpoint before registering new one",
+				slog.String("endpoint", service.Endpoint),
+				slog.String("task_type", taskType),
+				slog.String("new_service_id", service.ServiceID),
+				slog.String("note", "this is normal when service re-registers"))
+		}
 		
 		// 添加新服务
 		r.services[taskType] = append(r.services[taskType], service)
@@ -196,6 +203,10 @@ func (r *AlgorithmRegistry) HeartbeatWithStats(serviceID string, stats *conf.Hea
 	}
 
 	if !found {
+		// 服务未找到，可能是新服务或已过期，记录警告
+		r.log.Warn("heartbeat received but service not found by service_id",
+			slog.String("service_id", serviceID),
+			slog.String("note", "service may need to re-register"))
 		return fmt.Errorf("service not found: %s", serviceID)
 	}
 	
@@ -253,6 +264,10 @@ func (r *AlgorithmRegistry) HeartbeatByEndpointWithStats(endpoint string, stats 
 	}
 
 	if !found {
+		// 服务未找到，可能是新服务或已过期，记录警告
+		r.log.Warn("heartbeat received but service not found by endpoint",
+			slog.String("endpoint", endpoint),
+			slog.String("note", "service may need to re-register"))
 		return fmt.Errorf("service not found by endpoint: %s", endpoint)
 	}
 	
@@ -406,6 +421,7 @@ func (r *AlgorithmRegistry) checkAndRemoveExpired() {
 	totalAlive := 0
 
 	var expiredServices []conf.AlgorithmService
+	var nearExpiredServices []conf.AlgorithmService // 接近超时的服务（用于预警）
 	
 	for taskType, services := range r.services {
 		var alive []conf.AlgorithmService
@@ -414,6 +430,18 @@ func (r *AlgorithmRegistry) checkAndRemoveExpired() {
 			if age < timeoutSec {
 				alive = append(alive, svc)
 				totalAlive++
+				
+				// 预警：如果心跳年龄超过80%的超时时间，记录警告
+				if age > timeoutSec*80/100 {
+					nearExpiredServices = append(nearExpiredServices, svc)
+					r.log.Warn("algorithm service heartbeat age is high (near timeout)",
+						slog.String("service_id", svc.ServiceID),
+						slog.String("endpoint", svc.Endpoint),
+						slog.String("task_type", taskType),
+						slog.Int64("heartbeat_age_sec", age),
+						slog.Int64("timeout_threshold_sec", timeoutSec),
+						slog.String("note", "service may be experiencing network issues or high load"))
+				}
 			} else {
 				totalExpired++
 				expiredServices = append(expiredServices, svc)
@@ -423,7 +451,9 @@ func (r *AlgorithmRegistry) checkAndRemoveExpired() {
 					slog.String("endpoint", svc.Endpoint),
 					slog.String("task_type", taskType),
 					slog.Int64("heartbeat_age_sec", age),
-					slog.Int64("timeout_threshold_sec", timeoutSec))
+					slog.Int64("timeout_threshold_sec", timeoutSec),
+					slog.String("register_time", time.Unix(svc.RegisterAt, 0).Format("2006-01-02 15:04:05")),
+					slog.String("last_heartbeat_time", time.Unix(svc.LastHeartbeat, 0).Format("2006-01-02 15:04:05")))
 			}
 		}
 		r.services[taskType] = alive
@@ -446,7 +476,15 @@ func (r *AlgorithmRegistry) checkAndRemoveExpired() {
 	if totalExpired > 0 {
 		r.log.Info("heartbeat check completed - services expired",
 			slog.Int("total_alive", totalAlive),
-			slog.Int("total_expired", totalExpired))
+			slog.Int("total_expired", totalExpired),
+			slog.String("note", "expired services will be removed and can re-register when they come back online"))
+	}
+	
+	// 记录接近超时的服务数量（用于监控）
+	if len(nearExpiredServices) > 0 {
+		r.log.Warn("services with high heartbeat age detected",
+			slog.Int("near_expired_count", len(nearExpiredServices)),
+			slog.String("note", "these services may need attention"))
 	}
 }
 

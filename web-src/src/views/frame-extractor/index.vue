@@ -163,6 +163,24 @@
             <template #icon><ReloadOutlined /></template>
             刷新列表
           </a-button>
+          <a-button 
+            type="primary" 
+            @click="batchStartAllTasks" 
+            :loading="batchActionLoading"
+            size="small"
+          >
+            <template #icon><PlayCircleOutlined /></template>
+            一键启动全部
+          </a-button>
+          <a-button 
+            danger 
+            @click="batchStopAllTasks" 
+            :loading="batchActionLoading"
+            size="small"
+          >
+            <template #icon><PauseCircleOutlined /></template>
+            一键停止全部
+          </a-button>
           <a-button type="primary" @click="goToGallery">
             <template #icon><PictureOutlined /></template>
             查看抽帧结果
@@ -421,6 +439,7 @@ const configLoadSuccess = ref(false)
 const taskListLoading = ref(false)
 const items = ref([])
 const taskActionLoading = ref({})
+const batchActionLoading = ref(false)
 const editingInterval = ref({})
 const liveStreams = ref([])
 const rtspOptions = ref([])
@@ -576,7 +595,17 @@ const onStreamSelect = async (streamId, option) => {
 
 const fetchList = async () => {
   const { data } = await frameApi.listTasks()
-  items.value = data?.items || []
+  const tasks = data?.items || []
+  // 处理任务列表，设置config_status
+  // 注意：后端ListTasks已经会从MinIO检查preview图片并填充到preview_image字段
+  items.value = tasks.map(task => {
+    // 如果任务有preview_image，说明可以配置算法
+    const hasPreview = !!task.preview_image
+    return {
+      ...task,
+      config_status: hasPreview ? 'configured' : 'pending' // 根据是否有preview设置配置状态
+    }
+  })
 }
 
 // 刷新任务列表（带加载状态和提示）
@@ -694,6 +723,32 @@ const handleAlgoConfigSaved = async () => {
     message.error('刷新任务列表失败: ' + (e?.response?.data?.error || e.message))
   } finally {
     taskListLoading.value = false
+  }
+}
+
+const batchStartAllTasks = async () => {
+  batchActionLoading.value = true
+  try {
+    const { data } = await frameApi.batchStartTasks()
+    message.success(`批量启动完成：成功 ${data.success_count} 个，失败 ${data.failed_count} 个`)
+    await fetchList()
+  } catch (e) {
+    message.error('批量启动失败: ' + (e?.response?.data?.error || e.message))
+  } finally {
+    batchActionLoading.value = false
+  }
+}
+
+const batchStopAllTasks = async () => {
+  batchActionLoading.value = true
+  try {
+    const { data } = await frameApi.batchStopTasks()
+    message.success(`批量停止完成：成功 ${data.success_count} 个，失败 ${data.failed_count} 个`)
+    await fetchList()
+  } catch (e) {
+    message.error('批量停止失败: ' + (e?.response?.data?.error || e.message))
+  } finally {
+    batchActionLoading.value = false
   }
 }
 

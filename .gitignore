@@ -49,6 +49,25 @@ test_*.go
 check_*.sh
 INFERENCE_STOP_DIAGNOSIS.md
 
+# 临时分析报告和脚本
+*分析报告.md
+*分析总结.md
+*问题分析.md
+*诊断报告.md
+*修复说明.md
+*优化报告.md
+*状态总结.md
+*问题诊断报告.md
+*根本原因分析.md
+*深度分析报告.md
+*功能说明.md
+*修复报告.md
+analyze_*.sh
+check_*.sh
+diagnose_*.sh
+create_log_file.sh
+fix_logs.sh
+
 # 学习目录
 learn_go/
 

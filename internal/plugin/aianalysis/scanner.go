@@ -34,6 +34,7 @@ type Scanner struct {
 	lastScanTime time.Time // 上次扫描时间（用于计算实际间隔）
 	lastScanMu   sync.Mutex // 保护lastScanTime
 	configuredInterval float64 // 配置的扫描间隔（秒）
+	cleanupTicker *time.Ticker // 定期清理ticker
 }
 
 // NewScanner 创建扫描器
@@ -64,6 +65,10 @@ func (s *Scanner) Start(intervalSec float64, onNewImages func([]ImageInfo)) {
 		intervalMs = 100 // 最小100毫秒，避免过于频繁
 	}
 	ticker := time.NewTicker(time.Duration(intervalMs) * time.Millisecond)
+	
+	// 启动定期清理
+	s.startProcessedCleanup()
+	
 	go func() {
 		// 立即扫描一次
 		firstScanStart := time.Now()
@@ -142,6 +147,9 @@ func (s *Scanner) Start(intervalSec float64, onNewImages func([]ImageInfo)) {
 // Stop 停止扫描
 func (s *Scanner) Stop() {
 	close(s.stopScan)
+	if s.cleanupTicker != nil {
+		s.cleanupTicker.Stop()
+	}
 }
 
 // scanNewImages 扫描MinIO中的新图片
@@ -327,12 +335,48 @@ func (s *Scanner) isProcessed(imagePath string) bool {
 // cleanupProcessedLocked 清理过期的已处理记录（需要已加锁）
 func (s *Scanner) cleanupProcessedLocked() {
 	now := time.Now()
+	cleanupThreshold := 1 * time.Hour // 只保留最近1小时的记录
+	cleanedCount := 0
+	
 	for path, processedTime := range s.processed {
-		if now.Sub(processedTime) > 24*time.Hour {
+		if now.Sub(processedTime) > cleanupThreshold {
 			delete(s.processed, path)
+			cleanedCount++
 		}
 	}
-	s.log.Info("cleaned up processed images cache", slog.Int("remaining", len(s.processed)))
+	
+	if cleanedCount > 0 {
+		s.log.Info("cleaned up processed images cache",
+			slog.Int("cleaned_count", cleanedCount),
+			slog.Int("remaining", len(s.processed)))
+	}
+}
+
+// cleanupProcessed 清理过期的已处理记录（自动加锁）
+func (s *Scanner) cleanupProcessed() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cleanupProcessedLocked()
+}
+
+// startProcessedCleanup 启动定期清理
+func (s *Scanner) startProcessedCleanup() {
+	s.cleanupTicker = time.NewTicker(30 * time.Minute) // 每30分钟清理一次
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.log.Error("panic in processed cleanup", slog.Any("panic", r))
+			}
+		}()
+		for range s.cleanupTicker.C {
+			select {
+			case <-s.stopScan:
+				return
+			default:
+				s.cleanupProcessed()
+			}
+		}
+	}()
 }
 
 // isImageFile 判断是否为图片文件

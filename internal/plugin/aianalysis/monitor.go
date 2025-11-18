@@ -25,6 +25,16 @@ type PerformanceMonitor struct {
 	successCountInWindow int64 // 窗口内的成功推理数
 	windowStartTime time.Time // 窗口开始时间
 	
+	// 请求发送和响应统计
+	requestCountInWindow int64 // 窗口内的请求发送数
+	responseCountInWindow int64 // 窗口内的响应数（包括成功和失败）
+	requestRatePerSec float64 // 每秒请求发送数
+	responseRatePerSec float64 // 每秒响应数
+	requestWindowStartTime time.Time // 请求窗口开始时间
+	responseWindowStartTime time.Time // 响应窗口开始时间
+	lastRequestTime time.Time // 最后一次请求发送时间（用于超时检测）
+	lastResponseTime time.Time // 最后一次响应接收时间（用于超时检测）
+	
 	// 慢推理告警
 	slowThresholdMs int64
 	slowCount       int64
@@ -52,6 +62,10 @@ func NewPerformanceMonitor(slowThresholdMs int64, logger *slog.Logger) *Performa
 		lastUpdateTime:  now,
 		lastSuccessTime: now,
 		windowStartTime: now,
+		requestWindowStartTime: now,
+		responseWindowStartTime: now,
+		lastRequestTime: now,
+		lastResponseTime: now,
 		log:             logger,
 	}
 }
@@ -111,11 +125,51 @@ func (m *PerformanceMonitor) RecordInference(inferenceTimeMs int64, success bool
 			slog.Float64("inference_rate", m.inferenceRate),
 			slog.Float64("success_rate_per_sec", m.successRatePerSec))
 	}
+}
+
+// RecordRequestSent 记录一次请求发送
+func (m *PerformanceMonitor) RecordRequestSent() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	
-	// 检查慢推理
-	if inferenceTimeMs > m.slowThresholdMs {
-		m.slowCount++
-		m.checkSlowInferenceAlertLocked(inferenceTimeMs)
+	now := time.Now()
+	m.requestCountInWindow++
+	m.lastRequestTime = now // 更新最后请求时间
+	
+	// 计算窗口内的每秒请求数（使用最近1秒的数据）
+	windowDuration := now.Sub(m.requestWindowStartTime).Seconds()
+	if windowDuration >= 1.0 {
+		// 窗口已满1秒，计算每秒请求数
+		m.requestRatePerSec = float64(m.requestCountInWindow) / windowDuration
+		// 重置窗口
+		m.requestCountInWindow = 0
+		m.requestWindowStartTime = now
+	} else if windowDuration > 0 {
+		// 窗口未满1秒，使用当前数据估算
+		m.requestRatePerSec = float64(m.requestCountInWindow) / windowDuration
+	}
+}
+
+// RecordResponseReceived 记录一次响应接收（包括成功和失败）
+func (m *PerformanceMonitor) RecordResponseReceived() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
+	now := time.Now()
+	m.responseCountInWindow++
+	m.lastResponseTime = now // 更新最后响应时间
+	
+	// 计算窗口内的每秒响应数（使用最近1秒的数据）
+	windowDuration := now.Sub(m.responseWindowStartTime).Seconds()
+	if windowDuration >= 1.0 {
+		// 窗口已满1秒，计算每秒响应数
+		m.responseRatePerSec = float64(m.responseCountInWindow) / windowDuration
+		// 重置窗口
+		m.responseCountInWindow = 0
+		m.responseWindowStartTime = now
+	} else if windowDuration > 0 {
+		// 窗口未满1秒，使用当前数据估算
+		m.responseRatePerSec = float64(m.responseCountInWindow) / windowDuration
 	}
 }
 
@@ -207,6 +261,54 @@ func (m *PerformanceMonitor) GetStats() map[string]interface{} {
 		currentSuccessRate = m.successRatePerSec
 	}
 	
+	// 检查成功推理超时：如果超过3秒没有新的成功推理，置零
+	if !m.lastSuccessTime.IsZero() {
+		timeSinceLastSuccess := now.Sub(m.lastSuccessTime).Seconds()
+		if timeSinceLastSuccess > 3.0 {
+			currentSuccessRate = 0.0
+			m.successRatePerSec = 0.0
+			m.successCountInWindow = 0
+		}
+	}
+	
+	// 计算实时每秒请求数
+	requestWindowDuration := now.Sub(m.requestWindowStartTime).Seconds()
+	currentRequestRate := m.requestRatePerSec
+	if requestWindowDuration > 0 && requestWindowDuration < 1.0 {
+		currentRequestRate = float64(m.requestCountInWindow) / requestWindowDuration
+	} else if requestWindowDuration >= 1.0 {
+		currentRequestRate = m.requestRatePerSec
+	}
+	
+	// 检查请求超时：如果超过3秒没有新请求，置零
+	if !m.lastRequestTime.IsZero() {
+		timeSinceLastRequest := now.Sub(m.lastRequestTime).Seconds()
+		if timeSinceLastRequest > 3.0 {
+			currentRequestRate = 0.0
+			m.requestRatePerSec = 0.0
+			m.requestCountInWindow = 0
+		}
+	}
+	
+	// 计算实时每秒响应数
+	responseWindowDuration := now.Sub(m.responseWindowStartTime).Seconds()
+	currentResponseRate := m.responseRatePerSec
+	if responseWindowDuration > 0 && responseWindowDuration < 1.0 {
+		currentResponseRate = float64(m.responseCountInWindow) / responseWindowDuration
+	} else if responseWindowDuration >= 1.0 {
+		currentResponseRate = m.responseRatePerSec
+	}
+	
+	// 检查响应超时：如果超过3秒没有新响应，置零
+	if !m.lastResponseTime.IsZero() {
+		timeSinceLastResponse := now.Sub(m.lastResponseTime).Seconds()
+		if timeSinceLastResponse > 3.0 {
+			currentResponseRate = 0.0
+			m.responseRatePerSec = 0.0
+			m.responseCountInWindow = 0
+		}
+	}
+	
 	return map[string]interface{}{
 		"total_count":         m.totalInferences,
 		"success_count":       m.successInferences,
@@ -216,6 +318,8 @@ func (m *PerformanceMonitor) GetStats() map[string]interface{} {
 		"max_inference_ms":    m.maxInferenceTime,
 		"inference_per_sec":   inferPerSec,
 		"success_rate_per_sec": currentSuccessRate, // 每秒推理成功数
+		"request_rate_per_sec": currentRequestRate, // 每秒请求发送数
+		"response_rate_per_sec": currentResponseRate, // 每秒响应数
 		"slow_count":          m.slowCount,
 		"slow_threshold_ms":   m.slowThresholdMs,
 	}
@@ -239,6 +343,14 @@ func (m *PerformanceMonitor) Reset() {
 	m.windowStartTime = now
 	m.successCountInWindow = 0
 	m.successRatePerSec = 0
+	m.requestCountInWindow = 0
+	m.responseCountInWindow = 0
+	m.requestRatePerSec = 0
+	m.responseRatePerSec = 0
+	m.requestWindowStartTime = now
+	m.responseWindowStartTime = now
+	m.lastRequestTime = now
+	m.lastResponseTime = now
 	m.lastSlowAlert = time.Time{}
 	
 	m.log.Info("performance monitor stats reset")

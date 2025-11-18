@@ -27,6 +27,7 @@ type EventListener struct {
 	listening     bool            // 是否正在监听
 	listeningMu   sync.Mutex      // 保护listening状态
 	stopOnce      sync.Once       // 确保只关闭一次stopListen
+	cleanupTicker *time.Ticker    // 定期清理ticker
 }
 
 // NewEventListener 创建事件监听器
@@ -48,12 +49,18 @@ func (e *EventListener) Start(onNewImage func(ImageInfo), onImageDelete func(str
 	e.onImageDelete = onImageDelete
 
 	go e.listenEvents()
+	
+	// 启动定期清理
+	e.startProcessedCleanup()
 }
 
 // Stop 停止事件监听
 func (e *EventListener) Stop() {
 	e.stopOnce.Do(func() {
 		close(e.stopListen)
+		if e.cleanupTicker != nil {
+			e.cleanupTicker.Stop()
+		}
 		e.log.Info("event listener stop signal sent")
 	})
 }
@@ -361,12 +368,48 @@ func (e *EventListener) isProcessed(imagePath string) bool {
 // cleanupProcessedLocked 清理过期的已处理记录（需要已加锁）
 func (e *EventListener) cleanupProcessedLocked() {
 	now := time.Now()
+	cleanupThreshold := 1 * time.Hour // 只保留最近1小时的记录
+	cleanedCount := 0
+	
 	for path, processedTime := range e.processed {
-		if now.Sub(processedTime) > 24*time.Hour {
+		if now.Sub(processedTime) > cleanupThreshold {
 			delete(e.processed, path)
+			cleanedCount++
 		}
 	}
-	e.log.Info("cleaned up processed images cache", slog.Int("remaining", len(e.processed)))
+	
+	if cleanedCount > 0 {
+		e.log.Info("cleaned up processed images cache",
+			slog.Int("cleaned_count", cleanedCount),
+			slog.Int("remaining", len(e.processed)))
+	}
+}
+
+// cleanupProcessed 清理过期的已处理记录（自动加锁）
+func (e *EventListener) cleanupProcessed() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.cleanupProcessedLocked()
+}
+
+// startProcessedCleanup 启动定期清理
+func (e *EventListener) startProcessedCleanup() {
+	e.cleanupTicker = time.NewTicker(30 * time.Minute) // 每30分钟清理一次
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				e.log.Error("panic in processed cleanup", slog.Any("panic", r))
+			}
+		}()
+		for range e.cleanupTicker.C {
+			select {
+			case <-e.stopListen:
+				return
+			default:
+				e.cleanupProcessed()
+			}
+		}
+	}()
 }
 
 // GetProcessedCount 获取已处理图片数量（用于统计）

@@ -19,14 +19,14 @@ type Service struct {
 	cfg              *conf.AIAnalysisConfig
 	fxCfg            *conf.FrameExtractorConfig // Frame Extractor配置
 	registry         *AlgorithmRegistry
-	scanner          *Scanner          // 保留用于兼容（可选，用于初始扫描）
-	eventListener    *EventListener   // 事件监听器（替代扫描器）
+	scanner          *Scanner       // 保留用于兼容（可选，用于初始扫描）
+	eventListener    *EventListener // 事件监听器（替代扫描器）
 	scheduler        *Scheduler
 	mq               MessageQueue
-	queue            *InferenceQueue            // 智能队列
-	monitor          *PerformanceMonitor        // 性能监控
-	alertMgr         *AlertManager              // 告警管理
-	alertBatchWriter *data.AlertBatchWriter     // 批量写入告警
+	queue            *InferenceQueue        // 智能队列
+	monitor          *PerformanceMonitor    // 性能监控
+	alertMgr         *AlertManager          // 告警管理
+	alertBatchWriter *data.AlertBatchWriter // 批量写入告警
 	log              *slog.Logger
 }
 
@@ -82,10 +82,10 @@ func (s *Service) Start() error {
 	// 初始化注册中心（优先初始化，确保注册功能可用）
 	s.registry = NewRegistry(s.cfg.HeartbeatTimeoutSec, s.log)
 	s.registry.StartHeartbeatChecker()
-	
+
 	// 设置注册回调：算法服务上线时自动启动已配置的任务
 	s.registry.SetOnRegisterCallback(s.onAlgorithmServiceRegistered)
-	
+
 	// 设置注销回调：算法服务下线时记录日志
 	s.registry.SetOnUnregisterCallback(s.onAlgorithmServiceUnregistered)
 
@@ -100,10 +100,10 @@ func (s *Service) Start() error {
 	// 初始化智能队列
 	maxQueueSize := s.cfg.MaxQueueSize
 	if maxQueueSize <= 0 {
-		maxQueueSize = 100  // 默认值
+		maxQueueSize = 100 // 默认值
 	}
-	alertThreshold := maxQueueSize / 2  // 告警阈值设为队列大小的一半
-	
+	alertThreshold := maxQueueSize / 2 // 告警阈值设为队列大小的一半
+
 	s.queue = NewInferenceQueue(
 		maxQueueSize,         // 最大队列容量（可配置）
 		StrategyDropOldest,   // 丢弃最旧的策略
@@ -116,7 +116,7 @@ func (s *Service) Start() error {
 
 	// 初始化性能监控器
 	s.monitor = NewPerformanceMonitor(
-		5000,  // 推理超过5秒告警
+		5000, // 推理超过5秒告警
 		s.log,
 	)
 
@@ -126,9 +126,9 @@ func (s *Service) Start() error {
 	// 设置告警回调
 	s.queue.SetAlertCallback(func(alert AlertInfo) {
 		s.alertMgr.SendAlert(SystemAlert{
-			Type:      SystemAlertType(alert.Type),
-			Level:     AlertLevel(alert.Level),
-			Message:   alert.Message,
+			Type:    SystemAlertType(alert.Type),
+			Level:   AlertLevel(alert.Level),
+			Message: alert.Message,
 			Data: map[string]interface{}{
 				"queue_size": alert.QueueSize,
 				"dropped":    alert.Dropped,
@@ -151,7 +151,7 @@ func (s *Service) Start() error {
 	if alertBasePath == "" {
 		alertBasePath = "alerts/"
 	}
-	
+
 	// 初始化批量写入器
 	batchSize := s.cfg.AlertBatchSize
 	if batchSize <= 0 {
@@ -168,16 +168,16 @@ func (s *Service) Start() error {
 		s.log.With(slog.String("component", "alert_batch_writer")),
 	)
 	s.alertBatchWriter.Start()
-	
+
 	// 初始化事件监听器（替代扫描器，使用MinIO事件通知）
 	s.eventListener = NewEventListener(minioClient, s.fxCfg.MinIO.Bucket, s.fxCfg.MinIO.BasePath, alertBasePath, s.log)
-	
+
 	// 保留扫描器用于兼容（可选，用于初始扫描或降级）
 	s.scanner = NewScanner(minioClient, s.fxCfg.MinIO.Bucket, s.fxCfg.MinIO.BasePath, alertBasePath, s.log)
-	
+
 	// 初始化调度器
 	s.scheduler = NewScheduler(s.registry, minioClient, s.fxCfg.MinIO.Bucket, alertBasePath, s.mq, s.cfg.MaxConcurrentInfer, s.cfg.SaveOnlyWithDetection, s.alertBatchWriter, s.monitor, s.scanner, s.log)
-	
+
 	// 设置处理完成回调，用于增加processedCount
 	s.scheduler.SetOnProcessedCallback(func() {
 		s.queue.RecordProcessed()
@@ -188,24 +188,28 @@ func (s *Service) Start() error {
 
 	// 设置全局实例
 	globalService = s
-	
-	// 注册图片检查器到Frame Extractor，保护正在推理的图片和队列中等待的图片
-	// 这样可以确保所有待处理的图片都不会被清理
+
+	// 注册图片检查器到Frame Extractor，保护正在推理的图片、即将推理的图片和队列中等待的图片
+	// 这样可以确保所有待处理的图片都不会被清理，避免时间窗口漏洞
 	fxService := frameextractor.GetGlobal()
 	if fxService != nil {
 		fxService.SetQueueChecker(func(imagePath string) bool {
-			// 保护正在推理的图片
-			if s.scheduler.IsImageInferring(imagePath) {
-				return true
-			}
 			// 保护队列中等待的图片
 			if s.queue.Contains(imagePath) {
+				return true
+			}
+			// 保护即将推理的图片（在Pop之后、ScheduleInference执行之前）
+			if s.scheduler.IsImagePendingInference(imagePath) {
+				return true
+			}
+			// 保护正在推理的图片
+			if s.scheduler.IsImageInferring(imagePath) {
 				return true
 			}
 			return false
 		})
 		s.log.Info("image checker registered to frame extractor",
-			slog.String("note", "protecting both images currently being inferred and images waiting in queue"))
+			slog.String("note", "protecting images in queue, pending inference, and currently being inferred"))
 	}
 
 	s.log.Info("AI analysis plugin started successfully",
@@ -213,7 +217,7 @@ func (s *Service) Start() error {
 		slog.Int("alert_threshold", alertThreshold),
 		slog.String("queue_strategy", "drop_oldest"),
 		slog.Int64("slow_threshold_ms", 5000))
-	
+
 	return nil
 }
 
@@ -227,7 +231,7 @@ func (s *Service) startSmartInferenceLoop() {
 			queueAddStart := time.Now()
 			added := s.queue.Add([]ImageInfo{img})
 			queueAddDuration := time.Since(queueAddStart)
-			
+
 			if added > 0 {
 				s.log.Info("image added to queue via event",
 					slog.String("path", img.Path),
@@ -251,53 +255,53 @@ func (s *Service) startSmartInferenceLoop() {
 			}
 		},
 	)
-	
+
 	// 可选：执行一次初始扫描，处理启动前已存在的图片
 	// 注意：这可能导致重复处理，但可以确保不遗漏启动前的图片
 	// 如果不需要，可以注释掉这部分代码
 	go func() {
 		time.Sleep(2 * time.Second) // 等待事件监听器启动
 		s.log.Info("performing initial scan for existing images")
-	s.scanner.Start(s.cfg.ScanIntervalSec, func(images []ImageInfo) {
+		s.scanner.Start(s.cfg.ScanIntervalSec, func(images []ImageInfo) {
 			// 只执行一次扫描
 			queueAddStart := time.Now()
-		added := s.queue.Add(images)
+			added := s.queue.Add(images)
 			queueAddDuration := time.Since(queueAddStart)
-		
-		if added > 0 {
+
+			if added > 0 {
 				s.log.Info("initial scan: images added to queue",
-				slog.Int("added", added),
+					slog.Int("added", added),
 					slog.Int("queue_size", s.queue.Size()),
 					slog.Duration("queue_add_duration_ms", queueAddDuration))
-		}
-		
+			}
+
 			// 标记已处理
 			for _, img := range images {
 				s.scanner.MarkProcessed(img.Path)
 			}
-			
+
 			// 停止扫描器（只执行一次）
 			s.scanner.Stop()
 		})
 	}()
-	
+
 	// 启动多个推理处理worker以提升并发处理能力
 	workerCount := s.cfg.MaxConcurrentInfer
 	if workerCount <= 0 {
-		workerCount = 5  // 默认5个worker
+		workerCount = 5 // 默认5个worker
 	}
 	// 移除硬编码限制，允许使用配置的并发数
 	// 注意：过高的并发数可能导致资源耗尽，建议根据实际情况调整
-	
+
 	s.log.Info("starting inference workers",
 		slog.Int("worker_count", workerCount),
 		slog.Int("max_concurrent_infer", s.cfg.MaxConcurrentInfer))
-	
+
 	// 启动多个worker并行处理队列
 	for i := 0; i < workerCount; i++ {
 		go s.inferenceProcessLoop()
 	}
-	
+
 	// 启动定期统计和检查
 	go s.periodicStatsLoop()
 }
@@ -306,10 +310,35 @@ func (s *Service) startSmartInferenceLoop() {
 func (s *Service) inferenceProcessLoop() {
 	emptyQueueCount := 0
 	for {
-		// 从队列取出图片
+		// 在队列取数前，先确认算法并发是否有空位
+		if s.scheduler != nil {
+			maxConcurrent := s.scheduler.GetMaxConcurrent()
+			if maxConcurrent > 0 {
+				active := s.scheduler.GetActiveInferenceCount()
+				if int(active) >= maxConcurrent {
+					// 算法已满载，等待后再尝试
+					time.Sleep(10 * time.Millisecond)
+					continue
+				}
+			}
+		}
+
+		// 关键修复：从队列Pop后立即标记为"即将推理"，避免时间窗口漏洞
+		// 这样可以确保图片在Pop之后、ScheduleInference实际执行之前就受到保护
 		popStart := time.Now()
 		img, ok := s.queue.Pop()
 		popDuration := time.Since(popStart)
+
+		if ok {
+			// 立即标记为"即将推理"，避免时间窗口漏洞
+			// 标记操作很快（只是一个map操作），时间窗口已经非常小
+			marked := s.scheduler.MarkPendingInference(img.Path)
+			if !marked {
+				// 如果已经标记过，说明可能有重复，记录警告
+				s.log.Warn("image already marked as pending inference",
+					slog.String("path", img.Path))
+			}
+		}
 		if !ok {
 			emptyQueueCount++
 			// 每100次空队列才记录一次日志，避免日志过多
@@ -324,21 +353,23 @@ func (s *Service) inferenceProcessLoop() {
 			continue
 		}
 		emptyQueueCount = 0
-		
+
 		// 在调度推理前，先检查图片是否还存在（避免处理已被清理的图片）
 		// 注意：现在队列中的图片已被保护，但为了安全起见仍然检查
 		// 如果图片不存在，可能是被其他原因删除的
 		exists, statErr := s.scheduler.CheckImageExists(img.Path)
-		
+
 		if statErr != nil || !exists {
-			// 图片不存在，跳过处理（可能已被清理）
+			// 图片不存在，取消pending标记并跳过处理（可能已被清理）
+			s.scheduler.UnmarkPendingInference(img.Path)
+
 			s.log.Debug("image not found before inference, skipping",
 				slog.String("task_id", img.TaskID),
 				slog.String("image", img.Filename),
 				slog.String("path", img.Path),
 				slog.String("err", statErr.Error()),
 				slog.String("note", "image may have been deleted while waiting in queue"))
-			
+
 			// 标记为已处理，避免重复扫描
 			// 注意：图片不存在不算处理，不增加processedCount
 			if s.scanner != nil {
@@ -346,7 +377,7 @@ func (s *Service) inferenceProcessLoop() {
 			}
 			continue
 		}
-		
+
 		// 调度推理（异步执行，不阻塞worker，让worker可以继续处理下一张图片）
 		// 注意：processedCount会在推理成功或失败后通过回调自动增加
 		// 使用goroutine异步执行，提高并发处理能力
@@ -354,14 +385,14 @@ func (s *Service) inferenceProcessLoop() {
 			scheduleStart := time.Now()
 			s.scheduler.ScheduleInference(image)
 			totalDuration := time.Since(scheduleStart)
-			
+
 			// 记录调度耗时（仅在Debug级别，避免日志过多）
 			s.log.Debug("inference scheduled (async)",
 				slog.String("task_id", image.TaskID),
 				slog.String("image", image.Filename),
 				slog.Duration("schedule_duration_ms", totalDuration))
 		}(img)
-		
+
 		// 注意：worker不再等待推理完成，立即处理下一张图片
 		// 这样可以大幅提高吞吐量，充分利用300个worker的并发能力
 	}
@@ -371,27 +402,27 @@ func (s *Service) inferenceProcessLoop() {
 func (s *Service) periodicStatsLoop() {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
-	
+
 	for range ticker.C {
 		// 获取统计信息
 		queueStats := s.queue.GetStats()
 		perfStats := s.monitor.GetStats()
-		
+
 		// 记录统计日志
 		s.log.Info("performance statistics",
 			slog.Any("queue", queueStats),
 			slog.Any("performance", perfStats))
-		
+
 		// 检查丢弃率
 		dropRate := s.queue.GetDropRate()
-		if dropRate > 0.3 {  // 丢弃率超过30%
+		if dropRate > 0.3 { // 丢弃率超过30%
 			s.alertMgr.SendAlert(SystemAlert{
 				Type:    AlertTypeHighDrop,
 				Level:   LevelError,
 				Message: "图片丢弃率过高，推理能力严重不足",
 				Data: map[string]interface{}{
-					"drop_rate":      dropRate,
-					"dropped_total":  queueStats["dropped_total"],
+					"drop_rate":       dropRate,
+					"dropped_total":   queueStats["dropped_total"],
 					"processed_total": queueStats["processed_total"],
 				},
 				Timestamp: time.Now(),
@@ -414,7 +445,7 @@ func (s *Service) Stop() error {
 	if s.registry != nil {
 		s.registry.StopHeartbeatChecker()
 	}
-	
+
 	// 停止批量写入器（会刷新剩余数据）
 	if s.alertBatchWriter != nil {
 		s.log.Info("stopping alert batch writer and flushing remaining alerts")
@@ -426,7 +457,7 @@ func (s *Service) Stop() error {
 			s.log.Error("failed to close MQ", slog.String("err", err.Error()))
 		}
 	}
-	
+
 	// 输出最终统计
 	if s.queue != nil {
 		s.log.Info("final queue stats", slog.Any("stats", s.queue.GetStats()))
@@ -462,20 +493,24 @@ func (s *Service) GetQueue() *InferenceQueue {
 
 // InferenceStats 推理统计信息
 type InferenceStats struct {
-	QueueSize       int     `json:"queue_size"`        // 当前队列大小
-	QueueMaxSize    int     `json:"queue_max_size"`    // 队列最大容量
-	QueueUtilization float64 `json:"queue_utilization"` // 队列使用率
-	DroppedTotal    int64   `json:"dropped_total"`     // 累计丢弃数
-	ProcessedTotal  int64   `json:"processed_total"`   // 累计处理数
-	DropRate        float64 `json:"drop_rate"`         // 丢弃率
-	Strategy        string  `json:"strategy"`          // 队列策略
-	AvgInferenceMs  float64 `json:"avg_inference_ms"`  // 平均推理时间(ms)
-	MaxInferenceMs  int64   `json:"max_inference_ms"`  // 最大推理时间(ms)
-	TotalInferences int64   `json:"total_inferences"`  // 总推理次数
-	SuccessInferences int64 `json:"success_inferences"` // 成功推理次数
-	FailedInferences int64  `json:"failed_inferences"` // 失败次数
-	SuccessRatePerSec float64 `json:"success_rate_per_sec"` // 每秒推理成功数（张/秒）
-	UpdatedAt       string  `json:"updated_at"`        // 更新时间
+	QueueSize          int     `json:"queue_size"`           // 当前队列大小
+	QueueMaxSize       int     `json:"queue_max_size"`       // 队列最大容量
+	QueueUtilization   float64 `json:"queue_utilization"`    // 队列使用率
+	ActiveInferences   int32   `json:"active_inferences"`    // 当前正在推理的数量
+	MaxConcurrentInfer int     `json:"max_concurrent_infer"` // 最大并发推理数
+	DroppedTotal       int64   `json:"dropped_total"`        // 累计丢弃数
+	ProcessedTotal     int64   `json:"processed_total"`      // 累计处理数
+	DropRate           float64 `json:"drop_rate"`            // 丢弃率
+	Strategy           string  `json:"strategy"`             // 队列策略
+	AvgInferenceMs     float64 `json:"avg_inference_ms"`     // 平均推理时间(ms)
+	MaxInferenceMs     int64   `json:"max_inference_ms"`     // 最大推理时间(ms)
+	TotalInferences    int64   `json:"total_inferences"`     // 总推理次数
+		SuccessInferences  int64   `json:"success_inferences"`   // 成功推理次数
+		FailedInferences   int64   `json:"failed_inferences"`    // 失败次数
+		SuccessRatePerSec  float64 `json:"success_rate_per_sec"` // 每秒推理成功数（张/秒）
+		RequestRatePerSec  float64 `json:"request_rate_per_sec"` // 每秒请求发送数（次/秒）
+		ResponseRatePerSec float64 `json:"response_rate_per_sec"` // 每秒响应数（次/秒）
+		UpdatedAt          string  `json:"updated_at"`           // 更新时间
 }
 
 // GetInferenceStats 获取推理统计信息
@@ -485,36 +520,59 @@ func (s *Service) GetInferenceStats() InferenceStats {
 			UpdatedAt: time.Now().Format(time.RFC3339),
 		}
 	}
-	
+
 	queueStats := s.queue.GetStats()
 	perfStats := s.monitor.GetStats()
 	dropRate := s.queue.GetDropRate()
-	
+
 	successCount := int64(0)
 	if sc, ok := perfStats["success_count"].(int64); ok {
 		successCount = sc
 	}
-	
+
 	successRatePerSec := 0.0
 	if sr, ok := perfStats["success_rate_per_sec"].(float64); ok {
 		successRatePerSec = sr
 	}
-	
+
+	requestRatePerSec := 0.0
+	if rr, ok := perfStats["request_rate_per_sec"].(float64); ok {
+		requestRatePerSec = rr
+	}
+
+	responseRatePerSec := 0.0
+	if rr, ok := perfStats["response_rate_per_sec"].(float64); ok {
+		responseRatePerSec = rr
+	}
+
+	var activeCount int32
+	if s.scheduler != nil {
+		activeCount = s.scheduler.GetActiveInferenceCount()
+	}
+	maxConcurrent := s.cfg.MaxConcurrentInfer
+	if maxConcurrent <= 0 && s.scheduler != nil {
+		maxConcurrent = s.scheduler.GetMaxConcurrent()
+	}
+
 	return InferenceStats{
-		QueueSize:        queueStats["queue_size"].(int),
-		QueueMaxSize:     queueStats["max_size"].(int),
-		QueueUtilization: queueStats["utilization"].(float64),
-		DroppedTotal:     queueStats["dropped_total"].(int64),
-		ProcessedTotal:   queueStats["processed_total"].(int64),
-		DropRate:         dropRate,
-		Strategy:         queueStats["strategy"].(string),
-		AvgInferenceMs:   perfStats["avg_inference_ms"].(float64),
-		MaxInferenceMs:   perfStats["max_inference_ms"].(int64),
-		TotalInferences:  perfStats["total_count"].(int64),
-		SuccessInferences: successCount,
-		FailedInferences: perfStats["failed_count"].(int64),
-		SuccessRatePerSec: successRatePerSec,
-		UpdatedAt:        time.Now().Format(time.RFC3339),
+		QueueSize:          queueStats["queue_size"].(int),
+		QueueMaxSize:       queueStats["max_size"].(int),
+		QueueUtilization:   queueStats["utilization"].(float64),
+		ActiveInferences:   activeCount,
+		MaxConcurrentInfer: maxConcurrent,
+		DroppedTotal:       queueStats["dropped_total"].(int64),
+		ProcessedTotal:     queueStats["processed_total"].(int64),
+		DropRate:           dropRate,
+		Strategy:           queueStats["strategy"].(string),
+		AvgInferenceMs:     perfStats["avg_inference_ms"].(float64),
+		MaxInferenceMs:     perfStats["max_inference_ms"].(int64),
+		TotalInferences:    perfStats["total_count"].(int64),
+		SuccessInferences:  successCount,
+		FailedInferences:   perfStats["failed_count"].(int64),
+		SuccessRatePerSec:  successRatePerSec,
+		RequestRatePerSec:  requestRatePerSec,
+		ResponseRatePerSec: responseRatePerSec,
+		UpdatedAt:          time.Now().Format(time.RFC3339),
 	}
 }
 
@@ -523,19 +581,19 @@ func (s *Service) ResetInferenceStats() error {
 	if s.queue == nil || s.monitor == nil {
 		return fmt.Errorf("inference service not initialized")
 	}
-	
+
 	s.queue.ResetStats()
 	s.monitor.Reset()
-	
+
 	// 同时重置抽帧统计数据
 	fxService := frameextractor.GetGlobal()
 	if fxService != nil {
 		fxService.ResetFrameStats()
 		s.log.Info("frame extraction statistics also reset")
 	}
-	
+
 	s.log.Info("inference statistics reset by user request")
-	
+
 	return nil
 }
 
@@ -548,10 +606,10 @@ func (s *Service) initMinIO() (*minio.Client, error) {
 
 	// 配置自定义的 HTTP Transport 以解决 502 错误
 	transport := &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
-		DisableCompression:   false,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		DisableCompression:    false,
 		ResponseHeaderTimeout: 30 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
@@ -579,17 +637,17 @@ func (s *Service) initMinIO() (*minio.Client, error) {
 	var exists bool
 	maxRetries := 3
 	retryDelay := 2 * time.Second
-	
+
 	for i := 0; i < maxRetries; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		
+
 		exists, err = client.BucketExists(ctx, cfg.Bucket)
 		cancel()
-		
+
 		if err == nil {
 			break
 		}
-		
+
 		if i < maxRetries-1 {
 			s.log.Warn("minio bucket check failed, retrying...",
 				slog.Int("attempt", i+1),
@@ -599,16 +657,16 @@ func (s *Service) initMinIO() (*minio.Client, error) {
 			retryDelay *= 2 // 指数退避
 		}
 	}
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to check minio bucket after %d retries: %w", maxRetries, err)
 	}
-	
+
 	if !exists {
 		s.log.Info("creating minio bucket", slog.String("bucket", cfg.Bucket))
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		
+
 		if err := client.MakeBucket(ctx, cfg.Bucket, minio.MakeBucketOptions{}); err != nil {
 			return nil, fmt.Errorf("failed to create bucket %s: %w", cfg.Bucket, err)
 		}
@@ -656,14 +714,14 @@ func (s *Service) onAlgorithmServiceRegistered(serviceID string, taskTypes []str
 	s.log.Info("algorithm service online, checking tasks to auto-start",
 		slog.String("service_id", serviceID),
 		slog.Any("task_types", taskTypes))
-	
+
 	// 导入frameextractor包
 	fxService := s.getFrameExtractorService()
 	if fxService == nil {
 		s.log.Warn("frame extractor service not available")
 		return
 	}
-	
+
 	// 查找所有匹配task_type且已配置的抽帧任务
 	for _, taskType := range taskTypes {
 		tasks := fxService.GetTasksByType(taskType)
@@ -690,12 +748,12 @@ func (s *Service) onAlgorithmServiceUnregistered(serviceID string, reason string
 	s.log.Warn("algorithm service offline",
 		slog.String("service_id", serviceID),
 		slog.String("reason", reason))
-	
+
 	// 可以在这里添加额外的处理逻辑，例如：
 	// - 通知管理员服务下线
 	// - 暂停相关的抽帧任务（可选）
 	// - 记录服务中断事件
-	
+
 	// 注意：不要自动停止抽帧任务，因为：
 	// 1. 服务可能只是临时故障，很快会恢复
 	// 2. 可能有其他算法服务可以处理相同的任务类型
@@ -712,7 +770,6 @@ func (s *Service) GeneratePresignedURL(imagePath string) (string, error) {
 	if s.scheduler == nil {
 		return "", fmt.Errorf("scheduler not initialized")
 	}
-	
+
 	return s.scheduler.generatePresignedURL(imagePath)
 }
-

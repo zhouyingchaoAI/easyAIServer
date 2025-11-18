@@ -191,10 +191,9 @@ tranhevcway = 'copy'
 
 [frame_extractor]
 enable = true
-interval_ms = 1000
+interval_ms = 100
 output_dir = './snapshots'
 store = 'minio'
-max_frame_count = 1000  # 全局默认最大图片数量，0表示不限制
 task_types = ['人数统计', '绊线人数统计', '人员跌倒', '人员离岗', '吸烟检测', '区域入侵', '徘徊检测', '物品遗留', '安全帽检测']
 
 [frame_extractor.minio]
@@ -251,7 +250,6 @@ task_type = '人数统计'
 rtsp_url = 'rtsp://admin:HuaWei123@192.168.2.17:554/LiveMedia/ch1/Media1'
 interval_ms = 200
 output_path = '门口2'
-max_frame_count = 500  # 此任务最多保留500张图片
 enabled = true
 
 [[frame_extractor.tasks]]
@@ -326,7 +324,7 @@ mq_address = '172.16.5.207:9092'  # 消息队列地址
 mq_topic = 'easyai.alerts'  # 告警推送topic
 heartbeat_timeout_sec = 60  # 算法服务心跳超时（秒）
 max_concurrent_infer = 300  # 最大并发推理任务数
-max_queue_size = 50000  # 推理队列最大容量，默认: 100，建议根据实际情况调整
+max_queue_size = 5000  # 推理队列最大容量，默认: 100，建议根据实际情况调整
 save_only_with_detection = true  # 只保存有检测结果的告警，无检测结果的图片将被删除
 alert_base_path = 'alerts/'  # 告警图片存储路径前缀，与抽帧路径分离
 

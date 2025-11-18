@@ -267,6 +267,20 @@
           </a-col>
           <a-col :xs="24" :sm="8" :md="6">
             <a-statistic
+              title="并发占用"
+              :value="inferenceStats.active_inferences || 0"
+              :value-style="getConcurrencyColor()"
+            >
+              <template #prefix>
+                <ClusterOutlined />
+              </template>
+              <template #suffix>
+                <span style="font-size: 14px; color: #999;">/ {{ inferenceStats.max_concurrent_infer || '—' }}</span>
+              </template>
+            </a-statistic>
+          </a-col>
+          <a-col :xs="24" :sm="8" :md="6">
+            <a-statistic
               title="图片丢弃率"
               :value="(inferenceStats.drop_rate * 100).toFixed(2)"
               :value-style="getDropRateColor()"
@@ -354,6 +368,40 @@
               </a-statistic>
             </a-card>
           </a-col>
+          <a-col :xs="24" :sm="8" :md="6">
+            <a-card class="stat-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+              <a-statistic
+                title="每秒请求发送数"
+                :value="inferenceStats.request_rate_per_sec || 0"
+                :precision="2"
+                :value-style="{ color: '#fff', fontWeight: 'bold', fontSize: '28px' }"
+              >
+                <template #prefix>
+                  <ThunderboltOutlined style="color: #fff; font-size: 24px;" />
+                </template>
+                <template #suffix>
+                  <span style="font-size: 14px; color: rgba(255,255,255,0.8);">次/秒</span>
+                </template>
+              </a-statistic>
+            </a-card>
+          </a-col>
+          <a-col :xs="24" :sm="8" :md="6">
+            <a-card class="stat-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+              <a-statistic
+                title="每秒响应数"
+                :value="inferenceStats.response_rate_per_sec || 0"
+                :precision="2"
+                :value-style="{ color: '#fff', fontWeight: 'bold', fontSize: '28px' }"
+              >
+                <template #prefix>
+                  <ThunderboltOutlined style="color: #fff; font-size: 24px;" />
+                </template>
+                <template #suffix>
+                  <span style="font-size: 14px; color: rgba(255,255,255,0.8);">次/秒</span>
+                </template>
+              </a-statistic>
+            </a-card>
+          </a-col>
         </a-row>
         <!-- 告警提示 -->
         <div v-if="hasInferenceAlert()" class="mt-3">
@@ -418,7 +466,8 @@ import {
   ExclamationCircleOutlined,
   WarningOutlined,
   ClearOutlined,
-  ThunderboltOutlined
+  ThunderboltOutlined,
+  ClusterOutlined
 } from '@ant-design/icons-vue'
 import { frameApi } from '@/api'
 import request from '@/api/request'
@@ -450,6 +499,8 @@ const inferenceStats = ref({
   queue_size: 0,
   queue_max_size: 100,
   queue_utilization: 0,
+  active_inferences: 0,
+  max_concurrent_infer: 0,
   dropped_total: 0,
   processed_total: 0,
   drop_rate: 0,
@@ -460,6 +511,8 @@ const inferenceStats = ref({
   success_inferences: 0,
   failed_inferences: 0,
   success_rate_per_sec: 0, // 每秒推理成功数
+  request_rate_per_sec: 0, // 每秒请求发送数
+  response_rate_per_sec: 0, // 每秒响应数
   updated_at: ''
 })
 
@@ -568,6 +621,20 @@ const getUtilizationColor = () => {
   return { color: '#52c41a' }
 }
 
+// 并发占用颜色
+const getConcurrencyColor = () => {
+  const usage = getConcurrencyUsage()
+  if (usage >= 0.9) return { color: '#ff4d4f' }
+  if (usage >= 0.75) return { color: '#faad14' }
+  return { color: '#52c41a' }
+}
+
+const getConcurrencyUsage = () => {
+  const max = inferenceStats.value.max_concurrent_infer || 0
+  if (!max) return 0
+  return (inferenceStats.value.active_inferences || 0) / max
+}
+
 // 丢弃率颜色
 const getDropRateColor = () => {
   const dropRate = inferenceStats.value.drop_rate
@@ -589,16 +656,21 @@ const getInferenceTimeColor = () => {
 const hasInferenceAlert = () => {
   const utilization = inferenceStats.value.queue_utilization
   const dropRate = inferenceStats.value.drop_rate
-  return utilization > 0.8 || dropRate > 0.1
+  const concurrencyUsage = getConcurrencyUsage()
+  return utilization > 0.8 || dropRate > 0.1 || concurrencyUsage > 0.9
 }
 
 // 获取告警消息
 const getInferenceAlertMessage = () => {
   const utilization = inferenceStats.value.queue_utilization
   const dropRate = inferenceStats.value.drop_rate
+  const concurrencyUsage = getConcurrencyUsage()
   
   if (utilization > 0.8 && dropRate > 0.1) {
     return `推理队列严重堆积（使用率${(utilization * 100).toFixed(1)}%），图片丢弃率过高（${(dropRate * 100).toFixed(2)}%），建议：1）增加AI算法服务实例 2）降低抽帧频率 3）检查算法服务性能`
+  }
+  if (concurrencyUsage > 0.9) {
+    return `算法并发已接近上限（${(concurrencyUsage * 100).toFixed(1)}%），但队列仍可能持续增长，建议增加算法实例或提高最大并发配置`
   }
   if (utilization > 0.8) {
     return `推理队列堆积严重（使用率${(utilization * 100).toFixed(1)}%），建议增加AI算法服务实例或降低抽帧频率`
@@ -613,8 +685,10 @@ const getInferenceAlertMessage = () => {
 const getInferenceAlertType = () => {
   const utilization = inferenceStats.value.queue_utilization
   const dropRate = inferenceStats.value.drop_rate
+  const concurrencyUsage = getConcurrencyUsage()
   
-  if (utilization > 0.8 || dropRate > 0.2) return 'error'
+  if (utilization > 0.8 || dropRate > 0.2 || concurrencyUsage > 0.95) return 'error'
+  if (concurrencyUsage > 0.9) return 'warning'
   if (dropRate > 0.1) return 'warning'
   return 'warning'
 }

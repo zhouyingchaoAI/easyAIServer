@@ -296,6 +296,16 @@
                 style="width: 100%"
               />
             </a-form-item>
+            <a-form-item label="保存告警图片">
+              <a-switch 
+                v-model:checked="saveAlertImage" 
+                checked-children="保存" 
+                un-checked-children="不保存" 
+              />
+              <div style="margin-top: 8px; font-size: 12px; color: #999;">
+                默认关闭。如需在告警中心查看此任务的图片，请开启后重新保存配置。
+              </div>
+            </a-form-item>
           </a-form>
         </a-card>
       </div>
@@ -346,6 +356,7 @@ const algorithmParams = ref({
   confidence_threshold: 0.05,  // 🔧 默认置信度改为0.05
   iou_threshold: 0.5
 })
+const saveAlertImage = ref(false) // 是否保存告警图片
 
 // 监听visible变化
 watch(() => props.modelValue, (val) => {
@@ -365,6 +376,7 @@ watch(() => props.modelValue, (val) => {
       activeRegion.value = []
       drawMode.value = null
       polygonPoints.value = []
+      saveAlertImage.value = false
       
       // 初始化新Canvas
       await initCanvas()
@@ -556,6 +568,11 @@ const loadExistingConfig = async () => {
       // 🔧 深拷贝配置，避免修改原数据
       regions.value = JSON.parse(JSON.stringify(data.regions))
       algorithmParams.value = data.algorithm_params || algorithmParams.value
+      if (typeof data.save_alert_image === 'boolean') {
+        saveAlertImage.value = data.save_alert_image
+      } else if (typeof data.save_alert_image === 'string') {
+        saveAlertImage.value = data.save_alert_image === 'true'
+      }
       
       // 兼容旧配置：转换旧的方向值到新的方向值
       regions.value.forEach(region => {
@@ -1091,7 +1108,8 @@ const saveConfig = async () => {
       },
       coordinate_type: 'normalized',  // 明确标记坐标类型
       regions: regionsToSave,
-      algorithm_params: algorithmParams.value
+      algorithm_params: algorithmParams.value,
+      save_alert_image: saveAlertImage.value
     }
     
     console.log('保存配置（归一化坐标）:', {

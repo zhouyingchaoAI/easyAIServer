@@ -325,6 +325,7 @@ type FrameExtractTask struct {
     ConfigStatus string `json:"config_status" mapstructure:"config_status"` // 配置状态: "unconfigured" | "configured"
     PreviewImage string `json:"preview_image" mapstructure:"preview_image"` // 预览图片路径
     MaxFrameCount int   `json:"max_frame_count" mapstructure:"max_frame_count"` // 最大抽帧图片数量（0或未配置时使用全局配置）
+    SaveAlertImage *bool `json:"save_alert_image" mapstructure:"save_alert_image"` // 是否保存告警图片（nil表示使用全局配置，true/false表示任务级配置）
 }
 type RecordConfig struct {
 	EnableFlv            bool   `json:"enable_flv"`
@@ -456,6 +457,9 @@ type AIAnalysisConfig struct {
 	AlertBatchEnabled     bool `json:"alert_batch_enabled" mapstructure:"alert_batch_enabled"`           // 是否启用批量写入，默认: true
 	AlertBatchSize        int  `json:"alert_batch_size" mapstructure:"alert_batch_size"`                 // 批量写入大小，达到此数量触发写入，默认: 100
 	AlertBatchIntervalSec int  `json:"alert_batch_interval_sec" mapstructure:"alert_batch_interval_sec"` // 批量写入刷新间隔（秒），默认: 2
+	
+	// 图片移动配置
+	AlertImageMoveConcurrent int `json:"alert_image_move_concurrent" mapstructure:"alert_image_move_concurrent"` // 图片移动最大并发数，默认: 50
 }
 
 // AlgorithmService 算法服务注册信息

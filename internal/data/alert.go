@@ -58,7 +58,8 @@ func ListAlerts(filter model.AlertFilter) ([]model.Alert, int64, error) {
 	}
 
 	offset := (page - 1) * pageSize
-	if err := db.Order("created_at DESC").Limit(pageSize).Offset(offset).Find(&alerts).Error; err != nil {
+	// 确保最新告警在第一页：按创建时间倒序，如果时间相同则按ID倒序（ID越大越新）
+	if err := db.Order("created_at DESC, id DESC").Limit(pageSize).Offset(offset).Find(&alerts).Error; err != nil {
 		return nil, 0, err
 	}
 

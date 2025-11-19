@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,6 +44,9 @@ type Scheduler struct {
 	moveLockLastUse map[string]time.Time // 记录每个锁的最后使用时间，用于清理
 	moveLockMu      sync.Mutex
 
+	// 图片移动并发控制：限制同时进行的图片移动操作数
+	moveSemaphore chan struct{}
+
 	// 正在推理的图片集合（用于清理时保护，只保护正在推理的图片，不保护队列中等待的）
 	inferringImages  map[string]bool
 	inferringMu      sync.RWMutex
@@ -56,26 +60,38 @@ type Scheduler struct {
 	onProcessedCallback func()
 }
 
+// InferenceResult 推理结果（用于异步保存告警）
+type InferenceResult struct {
+	Alert         *model.Alert
+	ImagePath     string
+	AlertBasePath string
+}
+
 // NewScheduler 创建调度器
-func NewScheduler(registry *AlgorithmRegistry, minioClient *minio.Client, bucket, alertBasePath string, mq MessageQueue, maxConcurrent int, saveOnlyWithDetection bool, alertBatchWriter *data.AlertBatchWriter, monitor *PerformanceMonitor, scanner *Scanner, logger *slog.Logger) *Scheduler {
+func NewScheduler(registry *AlgorithmRegistry, minioClient *minio.Client, bucket, alertBasePath string, mq MessageQueue, maxConcurrent int, saveOnlyWithDetection bool, alertBatchWriter *data.AlertBatchWriter, monitor *PerformanceMonitor, scanner *Scanner, logger *slog.Logger, moveConcurrent int) *Scheduler {
 	if maxConcurrent <= 0 {
 		maxConcurrent = 5
 	}
 
-	// 优化HTTP客户端配置 - 快速失败，避免算法掉线时长时间卡死
+	// 图片移动并发数配置
+	if moveConcurrent <= 0 {
+		moveConcurrent = 50 // 默认50个并发
+	}
+
+	// 优化HTTP客户端配置 - 启用连接复用以提高性能，避免连接数持续增长导致变慢
 	transport := &http.Transport{
 		MaxIdleConns:          200,
 		MaxIdleConnsPerHost:   50,
-		IdleConnTimeout:       90 * time.Second,
+		IdleConnTimeout:       30 * time.Second, // 缩短到30秒，更快释放空闲连接
 		DisableCompression:    false,
-		ResponseHeaderTimeout: 60 * time.Second, // 缩短到60秒，快速失败
+		ResponseHeaderTimeout: 30 * time.Second, // 缩短到30秒，快速失败
 		ExpectContinueTimeout: 1 * time.Second,
-		// 关键：禁用连接复用，每次使用新连接，避免连接被提前关闭导致context canceled
-		DisableKeepAlives: true, // 改为true，确保连接稳定性
-		// 缩短连接超时时间，快速失败
+		// 关键：启用连接复用，避免每次请求都创建新连接，提高性能并减少资源消耗
+		DisableKeepAlives: false, // 改为false，启用连接复用
+		// 优化连接超时配置
 		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second, // 缩短到10秒，快速失败
-			KeepAlive: 0,                // 禁用keep-alive
+			Timeout:   5 * time.Second,   // 缩短到5秒，快速失败
+			KeepAlive: 30 * time.Second,  // 启用keep-alive，30秒保活
 		}).DialContext,
 	}
 
@@ -98,28 +114,29 @@ func NewScheduler(registry *AlgorithmRegistry, minioClient *minio.Client, bucket
 		monitor:                monitor,
 		scanner:                scanner,
 		moveLocks:              make(map[string]*sync.Mutex),
-		moveLockLastUse:         make(map[string]time.Time),
+		moveLockLastUse:        make(map[string]time.Time),
 		inferringImages:        make(map[string]bool),
-		pendingInferringImages:  make(map[string]time.Time),
+		pendingInferringImages: make(map[string]time.Time),
 		onProcessedCallback:    nil,
+		moveSemaphore:          make(chan struct{}, moveConcurrent),
 	}
-	
+
 	// 启动移动锁定期清理
 	scheduler.startMoveLockCleanup()
-	
+
 	// 启动pending标记超时清理
 	scheduler.startPendingCleanup()
-	
+
 	return scheduler
 }
 
-// cleanupPendingInferences 清理超过5分钟未处理的pending标记
+// cleanupPendingInferences 清理超过3分钟未处理的pending标记
 func (s *Scheduler) cleanupPendingInferences() {
 	s.pendingMu.Lock()
 	defer s.pendingMu.Unlock()
 
 	now := time.Now()
-	cleanupThreshold := 5 * time.Minute
+	cleanupThreshold := 3 * time.Minute // 缩短到3分钟
 	cleanedCount := 0
 
 	for path, markTime := range s.pendingInferringImages {
@@ -139,7 +156,7 @@ func (s *Scheduler) cleanupPendingInferences() {
 
 // startPendingCleanup 启动pending标记定期清理
 func (s *Scheduler) startPendingCleanup() {
-	ticker := time.NewTicker(5 * time.Minute) // 每5分钟清理一次
+	ticker := time.NewTicker(1 * time.Minute) // 缩短到每1分钟清理一次
 	go func() {
 		defer ticker.Stop()
 		for range ticker.C {
@@ -440,12 +457,12 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 	// 调用算法服务
 	resp, err := s.callAlgorithm(algorithm, req)
 	algorithmCallDuration := time.Since(algorithmCallStart)
-	
+
 	// 记录响应接收（无论成功或失败）
 	if s.monitor != nil {
 		s.monitor.RecordResponseReceived()
 	}
-	
+
 	if err != nil {
 		// 检查是否是404错误（图片不存在）
 		is404Error := strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "Not Found")
@@ -597,11 +614,15 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 		return
 	}
 
-	// 有检测结果，准备告警图片路径
+	// 检查是否保存告警图片（不影响告警信息的保存和推送）
+	shouldSaveImage := s.shouldSaveAlertImage(image.TaskID, algoConfig)
+	
+	// 准备告警图片路径
 	var alertImagePath string
 	var alertImageURL string
 
-	if s.alertBasePath != "" && detectionCount > 0 {
+	// 只有配置为保存图片时才移动/保存图片
+	if shouldSaveImage && s.alertBasePath != "" && detectionCount > 0 {
 		// 构建目标告警路径（保存告警时使用目标路径）
 		// 使用 ImageInfo 中已解析的 Filename，避免重复解析导致混淆
 		targetAlertPath := fmt.Sprintf("%s%s/%s/%s", s.alertBasePath, image.TaskType, image.TaskID, image.Filename)
@@ -621,7 +642,12 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 		// 在后台异步执行图片移动
 		// 注意：传递所有必要的参数到闭包，避免并发问题
 		// 使用移动锁确保同一task_id的图片按顺序移动，避免内容错位
+		// 使用并发控制限制同时进行的移动操作数
 		go func(srcPath, dstPath, taskID, taskType, filename string) {
+			// 获取并发控制信号量
+			s.moveSemaphore <- struct{}{}
+			defer func() { <-s.moveSemaphore }()
+
 			// 获取该task_id的移动锁，确保顺序移动
 			lock := s.getMoveLock(taskID)
 			lock.Lock()
@@ -646,11 +672,28 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 			}
 		}(image.Path, targetAlertPath, image.TaskID, image.TaskType, image.Filename)
 
-	} else {
-		// 未配置告警路径，使用原路径
+	} else if shouldSaveImage {
+		// 未配置告警路径，但需要保存图片，使用原路径
 		alertImagePath = image.Path
 		// 不预先生成URL，节省时间（API返回时按需生成）
 		alertImageURL = ""
+	} else {
+		// 不保存图片，路径为空
+		alertImagePath = ""
+		alertImageURL = ""
+		
+		// 删除原图片（不保存告警图片）
+		s.log.Info("alert image saving disabled for task, deleting original image",
+			slog.String("task_id", image.TaskID),
+			slog.String("task_type", image.TaskType),
+			slog.String("image", image.Path),
+			slog.String("note", "alert will be saved without image"))
+		
+		if err := s.deleteImageWithReason(image.Path, "alert_image_save_disabled"); err != nil {
+			s.log.Error("failed to delete image after alert image disabled",
+				slog.String("path", image.Path),
+				slog.String("err", err.Error()))
+		}
 	}
 
 	// 保存告警到数据库
@@ -669,8 +712,8 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 		CreatedAt:       time.Now(),
 	}
 
-	// 验证任务ID与图片路径的一致性
-	if strings.Contains(alertImagePath, "/") {
+	// 验证任务ID与图片路径的一致性（只在有图片路径时验证）
+	if alertImagePath != "" && strings.Contains(alertImagePath, "/") {
 		pathParts := strings.Split(alertImagePath, "/")
 		if len(pathParts) >= 3 {
 			pathTaskID := pathParts[len(pathParts)-2] // 倒数第二个部分应该是task_id
@@ -750,9 +793,10 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 		s.scanner.MarkProcessed(image.Path)
 	}
 
-	// 如果未配置告警路径（使用了原路径），告警已保存后删除原文件
+	// 如果未配置告警路径且需要保存图片（使用了原路径），告警已保存后删除原文件
 	// 注意：删除后alert记录中的ImagePath会失效，但用户要求总是删除原路径
-	if s.alertBasePath == "" && alertImagePath == image.Path {
+	// 如果shouldSaveImage为false，图片已经在上面删除了，这里不需要再删除
+	if shouldSaveImage && s.alertBasePath == "" && alertImagePath == image.Path && alertImagePath != "" {
 		if err := s.deleteImageWithReason(image.Path, "after_inference_no_alert_path"); err != nil {
 			s.log.Error("failed to delete original image after inference (no alert path)",
 				slog.String("path", image.Path),
@@ -803,36 +847,16 @@ func (s *Scheduler) callAlgorithm(algorithm conf.AlgorithmService, req conf.Infe
 	}
 
 	for i := 0; i < maxRetries; i++ {
-		// 每次重试都创建全新的HTTP客户端，确保完全隔离
-		// 创建独立的Transport，避免连接状态问题
-		isolatedTransport := &http.Transport{
-			MaxIdleConns:          1,
-			MaxIdleConnsPerHost:   1,
-			IdleConnTimeout:       30 * time.Second,
-			DisableCompression:    false,
-			ResponseHeaderTimeout: 60 * time.Second, // 缩短到60秒，快速失败
-			ExpectContinueTimeout: 1 * time.Second,
-			DisableKeepAlives:     true, // 禁用连接复用
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second, // 缩短到10秒，快速失败
-				KeepAlive: 0,
-			}).DialContext,
-		}
-
-		isolatedClient := &http.Client{
-			Transport: isolatedTransport,
-			Timeout:   60 * time.Second, // 缩短到60秒，快速失败
-		}
-
-		// 不使用context，直接使用HTTP客户端的超时设置，避免context canceled错误
+		// 使用全局优化的HTTP客户端，启用连接复用以提高性能
+		// 注意：全局客户端已配置连接复用，可以大幅提高并发请求速度
 		httpReq, err := http.NewRequest("POST", algorithm.Endpoint, bytes.NewReader(reqBody))
 		if err != nil {
 			return nil, fmt.Errorf("create request failed: %w", err)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Connection", "close") // 强制关闭连接
+		// 不设置Connection: close，使用连接复用
 
-		httpResp, err := isolatedClient.Do(httpReq)
+		httpResp, err := s.httpClient.Do(httpReq)
 
 		if err == nil {
 			defer httpResp.Body.Close()
@@ -998,6 +1022,47 @@ func extractDetectionCount(result interface{}) int {
 	return 0
 }
 
+func parseBoolFromConfig(val interface{}) (bool, bool) {
+	switch v := val.(type) {
+	case bool:
+		return v, true
+	case string:
+		if parsed, err := strconv.ParseBool(v); err == nil {
+			return parsed, true
+		}
+	case float64:
+		return v != 0, true
+	}
+	return false, false
+}
+
+func (s *Scheduler) shouldSaveAlertImage(taskID string, algoConfig map[string]interface{}) bool {
+	// 优先从任务配置中读取
+	if fxService := s.getFrameExtractorService(); fxService != nil {
+		if task := fxService.GetTaskByID(taskID); task != nil {
+			// 如果任务配置了SaveAlertImage，使用任务配置
+			if task.SaveAlertImage != nil {
+				return *task.SaveAlertImage
+			}
+		}
+	}
+	
+	// 其次从算法配置中读取（兼容旧逻辑）
+	if algoConfig != nil {
+		if val, ok := parseBoolFromConfig(algoConfig["save_alert_image"]); ok {
+			return val
+		}
+		if params, ok := algoConfig["algorithm_params"].(map[string]interface{}); ok {
+			if val, ok := parseBoolFromConfig(params["save_alert_image"]); ok {
+				return val
+			}
+		}
+	}
+	
+	// 默认返回true（保存告警图片）
+	return true
+}
+
 // deleteImage 删除MinIO中的图片
 func (s *Scheduler) deleteImage(imagePath string) error {
 	return s.deleteImageWithReason(imagePath, "unknown")
@@ -1070,12 +1135,17 @@ func (s *Scheduler) moveImageToAlertPathAsync(srcPath, dstPath string) error {
 	return fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
-// moveImageToAlertPathInternal 内部移动操作
+// moveImageToAlertPathInternal 内部移动操作（带监控）
 func (s *Scheduler) moveImageToAlertPathInternal(srcPath, dstPath string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	// 记录开始时间
+	startTime := time.Now()
+	
+	// 优化超时时间：从15秒降到5秒，快速失败
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	// 复制对象到新路径
+	copyStart := time.Now()
 	src := minio.CopySrcOptions{
 		Bucket: s.bucket,
 		Object: srcPath,
@@ -1086,17 +1156,39 @@ func (s *Scheduler) moveImageToAlertPathInternal(srcPath, dstPath string) error 
 	}
 
 	_, err := s.minio.CopyObject(ctx, dst, src)
+	copyDuration := time.Since(copyStart)
+	
 	if err != nil {
+		// 记录失败
+		if s.monitor != nil {
+			s.monitor.RecordMinIOMove(false, time.Since(startTime).Milliseconds())
+		}
 		return fmt.Errorf("copy object failed: %w", err)
 	}
 
 	// 删除原文件（等待复制完成后再删除）
+	removeStart := time.Now()
 	if err := s.minio.RemoveObject(ctx, s.bucket, srcPath, minio.RemoveObjectOptions{}); err != nil {
 		// 复制成功但删除失败，不返回错误（原文件留着也无妨）
 		s.log.Warn("failed to remove original image after copy (not critical)",
 			slog.String("path", srcPath),
 			slog.String("err", err.Error()))
 	}
+	removeDuration := time.Since(removeStart)
+	totalDuration := time.Since(startTime)
+
+	// 记录成功和响应时间
+	if s.monitor != nil {
+		s.monitor.RecordMinIOMove(true, totalDuration.Milliseconds())
+	}
+
+	// 记录性能日志（Debug级别，避免日志过多）
+	s.log.Debug("image move completed",
+		slog.String("src", srcPath),
+		slog.String("dst", dstPath),
+		slog.Duration("copy_duration_ms", copyDuration),
+		slog.Duration("remove_duration_ms", removeDuration),
+		slog.Duration("total_duration_ms", totalDuration))
 
 	return nil
 }
@@ -1135,20 +1227,20 @@ func (s *Scheduler) getMoveLock(taskID string) *sync.Mutex {
 	if _, ok := s.moveLocks[taskID]; !ok {
 		s.moveLocks[taskID] = &sync.Mutex{}
 	}
-	
+
 	// 更新最后使用时间
 	s.moveLockLastUse[taskID] = time.Now()
 
 	return s.moveLocks[taskID]
 }
 
-// cleanupMoveLocks 清理超过5分钟未使用的移动锁
+// cleanupMoveLocks 清理超过3分钟未使用的移动锁
 func (s *Scheduler) cleanupMoveLocks() {
 	s.moveLockMu.Lock()
 	defer s.moveLockMu.Unlock()
 
 	now := time.Now()
-	cleanupThreshold := 5 * time.Minute
+	cleanupThreshold := 3 * time.Minute // 缩短到3分钟
 	cleanedCount := 0
 
 	for taskID, lastUse := range s.moveLockLastUse {
@@ -1168,7 +1260,7 @@ func (s *Scheduler) cleanupMoveLocks() {
 
 // startMoveLockCleanup 启动移动锁定期清理
 func (s *Scheduler) startMoveLockCleanup() {
-	ticker := time.NewTicker(10 * time.Minute) // 每10分钟清理一次
+	ticker := time.NewTicker(2 * time.Minute) // 缩短到每2分钟清理一次
 	go func() {
 		defer ticker.Stop()
 		for range ticker.C {

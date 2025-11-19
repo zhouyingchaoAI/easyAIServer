@@ -195,6 +195,13 @@ interval_ms = 100
 output_dir = './snapshots'
 store = 'minio'
 task_types = ['人数统计', '绊线人数统计', '人员跌倒', '人员离岗', '吸烟检测', '区域入侵', '徘徊检测', '物品遗留', '安全帽检测']
+# 全局默认最大抽帧图片数量（0表示不限制）
+# 注意：此限制是**按每个任务分别计算**的，不是所有任务的总和
+# 例如：如果设置为1000，每个任务最多保留1000张图片
+# 当某个任务的图片数量超过此限制时，系统会自动删除该任务最旧的图片，保留最新的图片
+# 清理触发条件：每上传50张图片或每5分钟触发一次清理
+# 任务级配置：可以在每个任务中单独设置 max_frame_count，任务级配置优先于全局配置
+max_frame_count = 1000
 
 [frame_extractor.minio]
 endpoint = '172.16.5.207:9000'
@@ -324,9 +331,10 @@ mq_address = '172.16.5.207:9092'  # 消息队列地址
 mq_topic = 'easyai.alerts'  # 告警推送topic
 heartbeat_timeout_sec = 60  # 算法服务心跳超时（秒）
 max_concurrent_infer = 300  # 最大并发推理任务数
-max_queue_size = 5000  # 推理队列最大容量，默认: 100，建议根据实际情况调整
+max_queue_size = 50000  # 推理队列最大容量，默认: 100，建议根据实际情况调整
 save_only_with_detection = true  # 只保存有检测结果的告警，无检测结果的图片将被删除
 alert_base_path = 'alerts/'  # 告警图片存储路径前缀，与抽帧路径分离
+alert_image_move_concurrent = 50  # 图片移动最大并发数，默认: 50
 
 # 批量写入优化配置（降低数据库写入延迟）
 alert_batch_enabled = true  # 启用批量写入（建议开启，可提升性能2-4倍）

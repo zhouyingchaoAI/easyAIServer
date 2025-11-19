@@ -93,9 +93,11 @@ func (e *EventListener) listenEvents() {
 				return
 			default:
 			}
-			// 等待一段时间后重新启动监听
-			time.Sleep(5 * time.Second)
-			go e.listenEvents()
+			// 修复：不再递归启动新的监听器，避免goroutine泄漏
+			// 如果监听器崩溃，应该由外部服务重新启动，而不是自动重启
+			// 自动重启可能导致多个监听器同时运行，造成goroutine泄漏
+			e.log.Error("event listener panic recovered, but not auto-restarting to prevent goroutine leak",
+				slog.String("note", "service restart required"))
 		}
 	}()
 	
@@ -368,7 +370,7 @@ func (e *EventListener) isProcessed(imagePath string) bool {
 // cleanupProcessedLocked 清理过期的已处理记录（需要已加锁）
 func (e *EventListener) cleanupProcessedLocked() {
 	now := time.Now()
-	cleanupThreshold := 1 * time.Hour // 只保留最近1小时的记录
+	cleanupThreshold := 30 * time.Minute // 缩短到只保留最近30分钟的记录
 	cleanedCount := 0
 	
 	for path, processedTime := range e.processed {
@@ -394,7 +396,7 @@ func (e *EventListener) cleanupProcessed() {
 
 // startProcessedCleanup 启动定期清理
 func (e *EventListener) startProcessedCleanup() {
-	e.cleanupTicker = time.NewTicker(30 * time.Minute) // 每30分钟清理一次
+	e.cleanupTicker = time.NewTicker(5 * time.Minute) // 缩短到每5分钟清理一次
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {

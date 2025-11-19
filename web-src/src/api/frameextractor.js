@@ -27,6 +27,9 @@ export default {
   updateInterval(id, intervalMs){
     return request({ url: `/frame_extractor/tasks/${id}/interval`, method: 'put', data: { interval_ms: intervalMs } });
   },
+  updateSaveAlertImage(id, saveAlertImage){
+    return request({ url: `/frame_extractor/tasks/${id}/save_alert_image`, method: 'put', data: { save_alert_image: saveAlertImage } });
+  },
   getStatus(id){
     return request({ url: `/frame_extractor/tasks/${id}/status`, method: 'get' });
   },

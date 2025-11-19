@@ -40,6 +40,14 @@ type PerformanceMonitor struct {
 	slowCount       int64
 	lastSlowAlert   time.Time
 	
+	// MinIO操作监控（图片移动）
+	minIOMoveTotal      int64   // 总移动次数
+	minIOMoveSuccess    int64   // 成功次数
+	minIOMoveFailed     int64   // 失败次数
+	minIOMoveTotalTime  int64   // 总耗时（毫秒）
+	minIOMoveAvgTime    float64 // 平均耗时（毫秒）
+	minIOMoveMaxTime    int64   // 最大耗时（毫秒）
+	
 	// 线程安全
 	mu sync.RWMutex
 	
@@ -239,6 +247,26 @@ func (m *PerformanceMonitor) CalculateSamplingRate(frameIntervalMs int) int {
 	return samplingRate
 }
 
+// RecordMinIOMove 记录MinIO图片移动操作
+func (m *PerformanceMonitor) RecordMinIOMove(success bool, durationMs int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
+	m.minIOMoveTotal++
+	if success {
+		m.minIOMoveSuccess++
+		m.minIOMoveTotalTime += durationMs
+		if m.minIOMoveSuccess > 0 {
+			m.minIOMoveAvgTime = float64(m.minIOMoveTotalTime) / float64(m.minIOMoveSuccess)
+		}
+		if durationMs > m.minIOMoveMaxTime {
+			m.minIOMoveMaxTime = durationMs
+		}
+	} else {
+		m.minIOMoveFailed++
+	}
+}
+
 // GetStats 获取统计信息
 func (m *PerformanceMonitor) GetStats() map[string]interface{} {
 	m.mu.RLock()
@@ -309,6 +337,12 @@ func (m *PerformanceMonitor) GetStats() map[string]interface{} {
 		}
 	}
 	
+	// 计算MinIO移动成功率
+	minIOMoveSuccessRate := 0.0
+	if m.minIOMoveTotal > 0 {
+		minIOMoveSuccessRate = float64(m.minIOMoveSuccess) / float64(m.minIOMoveTotal)
+	}
+
 	return map[string]interface{}{
 		"total_count":         m.totalInferences,
 		"success_count":       m.successInferences,
@@ -322,6 +356,14 @@ func (m *PerformanceMonitor) GetStats() map[string]interface{} {
 		"response_rate_per_sec": currentResponseRate, // 每秒响应数
 		"slow_count":          m.slowCount,
 		"slow_threshold_ms":   m.slowThresholdMs,
+		
+		// MinIO操作监控（图片移动）
+		"minio_move_total":        m.minIOMoveTotal,
+		"minio_move_success":      m.minIOMoveSuccess,
+		"minio_move_failed":       m.minIOMoveFailed,
+		"minio_move_avg_time_ms":  m.minIOMoveAvgTime,
+		"minio_move_max_time_ms":  m.minIOMoveMaxTime,
+		"minio_move_success_rate": minIOMoveSuccessRate,
 	}
 }
 

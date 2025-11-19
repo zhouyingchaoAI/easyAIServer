@@ -114,6 +114,14 @@ func (s *Service) buildTaskLines() []string {
 		lines = append(lines, fmt.Sprintf("interval_ms = %d", t.IntervalMs))
 		lines = append(lines, fmt.Sprintf("output_path = '%s'", t.OutputPath))
 		lines = append(lines, fmt.Sprintf("enabled = %t", t.Enabled))
+		// 保存max_frame_count（如果设置了）
+		if t.MaxFrameCount > 0 {
+			lines = append(lines, fmt.Sprintf("max_frame_count = %d", t.MaxFrameCount))
+		}
+		// 保存save_alert_image（如果设置了）
+		if t.SaveAlertImage != nil {
+			lines = append(lines, fmt.Sprintf("save_alert_image = %t", *t.SaveAlertImage))
+		}
 		lines = append(lines, "")
 	}
 	return lines

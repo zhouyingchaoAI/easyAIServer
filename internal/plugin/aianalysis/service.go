@@ -176,7 +176,11 @@ func (s *Service) Start() error {
 	s.scanner = NewScanner(minioClient, s.fxCfg.MinIO.Bucket, s.fxCfg.MinIO.BasePath, alertBasePath, s.log)
 
 	// 初始化调度器
-	s.scheduler = NewScheduler(s.registry, minioClient, s.fxCfg.MinIO.Bucket, alertBasePath, s.mq, s.cfg.MaxConcurrentInfer, s.cfg.SaveOnlyWithDetection, s.alertBatchWriter, s.monitor, s.scanner, s.log)
+	moveConcurrent := s.cfg.AlertImageMoveConcurrent
+	if moveConcurrent <= 0 {
+		moveConcurrent = 50 // 默认50个并发
+	}
+	s.scheduler = NewScheduler(s.registry, minioClient, s.fxCfg.MinIO.Bucket, alertBasePath, s.mq, s.cfg.MaxConcurrentInfer, s.cfg.SaveOnlyWithDetection, s.alertBatchWriter, s.monitor, s.scanner, s.log, moveConcurrent)
 
 	// 设置处理完成回调，用于增加processedCount
 	s.scheduler.SetOnProcessedCallback(func() {
@@ -281,7 +285,10 @@ func (s *Service) startSmartInferenceLoop() {
 			}
 
 			// 停止扫描器（只执行一次）
+			// 注意：如果scanner已经被Stop()过，这里会安全处理（不会panic）
+			if s.scanner != nil {
 			s.scanner.Stop()
+			}
 		})
 	}()
 
@@ -378,23 +385,22 @@ func (s *Service) inferenceProcessLoop() {
 			continue
 		}
 
-		// 调度推理（异步执行，不阻塞worker，让worker可以继续处理下一张图片）
-		// 注意：processedCount会在推理成功或失败后通过回调自动增加
-		// 使用goroutine异步执行，提高并发处理能力
-		go func(image ImageInfo) {
+		// 调度推理（同步调用，调度器内部已有并发控制）
+		// 修复：移除额外的goroutine，避免goroutine泄漏
+		// ScheduleInference内部已经有并发控制（通过activeInferences和maxConcurrent），
+		// 不需要为每个图片都启动一个goroutine，这会导致goroutine数量无限增长
 			scheduleStart := time.Now()
-			s.scheduler.ScheduleInference(image)
+		s.scheduler.ScheduleInference(img)
 			totalDuration := time.Since(scheduleStart)
 
 			// 记录调度耗时（仅在Debug级别，避免日志过多）
-			s.log.Debug("inference scheduled (async)",
-				slog.String("task_id", image.TaskID),
-				slog.String("image", image.Filename),
+		s.log.Debug("inference scheduled",
+			slog.String("task_id", img.TaskID),
+			slog.String("image", img.Filename),
 				slog.Duration("schedule_duration_ms", totalDuration))
-		}(img)
 
 		// 注意：worker不再等待推理完成，立即处理下一张图片
-		// 这样可以大幅提高吞吐量，充分利用300个worker的并发能力
+		// ScheduleInference内部会异步执行推理，不会阻塞worker
 	}
 }
 
@@ -510,7 +516,16 @@ type InferenceStats struct {
 		SuccessRatePerSec  float64 `json:"success_rate_per_sec"` // 每秒推理成功数（张/秒）
 		RequestRatePerSec  float64 `json:"request_rate_per_sec"` // 每秒请求发送数（次/秒）
 		ResponseRatePerSec float64 `json:"response_rate_per_sec"` // 每秒响应数（次/秒）
-		UpdatedAt          string  `json:"updated_at"`           // 更新时间
+	
+	// MinIO操作监控（图片移动）
+	MinIOMoveTotal       int64   `json:"minio_move_total"`        // 总移动次数
+	MinIOMoveSuccess     int64   `json:"minio_move_success"`      // 成功次数
+	MinIOMoveFailed      int64   `json:"minio_move_failed"`       // 失败次数
+	MinIOMoveAvgTimeMs   float64 `json:"minio_move_avg_time_ms"`  // 平均耗时（毫秒）
+	MinIOMoveMaxTimeMs   int64   `json:"minio_move_max_time_ms"`  // 最大耗时（毫秒）
+	MinIOMoveSuccessRate float64 `json:"minio_move_success_rate"` // 成功率（0.0-1.0）
+	
+	UpdatedAt string `json:"updated_at"` // 更新时间
 }
 
 // GetInferenceStats 获取推理统计信息
@@ -545,6 +560,33 @@ func (s *Service) GetInferenceStats() InferenceStats {
 		responseRatePerSec = rr
 	}
 
+	// 获取MinIO操作监控指标
+	minIOMoveTotal := int64(0)
+	minIOMoveSuccess := int64(0)
+	minIOMoveFailed := int64(0)
+	minIOMoveAvgTimeMs := 0.0
+	minIOMoveMaxTimeMs := int64(0)
+	minIOMoveSuccessRate := 0.0
+
+	if mt, ok := perfStats["minio_move_total"].(int64); ok {
+		minIOMoveTotal = mt
+	}
+	if ms, ok := perfStats["minio_move_success"].(int64); ok {
+		minIOMoveSuccess = ms
+	}
+	if mf, ok := perfStats["minio_move_failed"].(int64); ok {
+		minIOMoveFailed = mf
+	}
+	if mat, ok := perfStats["minio_move_avg_time_ms"].(float64); ok {
+		minIOMoveAvgTimeMs = mat
+	}
+	if mmt, ok := perfStats["minio_move_max_time_ms"].(int64); ok {
+		minIOMoveMaxTimeMs = mmt
+	}
+	if msr, ok := perfStats["minio_move_success_rate"].(float64); ok {
+		minIOMoveSuccessRate = msr
+	}
+
 	var activeCount int32
 	if s.scheduler != nil {
 		activeCount = s.scheduler.GetActiveInferenceCount()
@@ -572,7 +614,16 @@ func (s *Service) GetInferenceStats() InferenceStats {
 		SuccessRatePerSec:  successRatePerSec,
 		RequestRatePerSec:  requestRatePerSec,
 		ResponseRatePerSec: responseRatePerSec,
-		UpdatedAt:          time.Now().Format(time.RFC3339),
+		
+		// MinIO操作监控（图片移动）
+		MinIOMoveTotal:       minIOMoveTotal,
+		MinIOMoveSuccess:     minIOMoveSuccess,
+		MinIOMoveFailed:      minIOMoveFailed,
+		MinIOMoveAvgTimeMs:   minIOMoveAvgTimeMs,
+		MinIOMoveMaxTimeMs:   minIOMoveMaxTimeMs,
+		MinIOMoveSuccessRate: minIOMoveSuccessRate,
+		
+		UpdatedAt: time.Now().Format(time.RFC3339),
 	}
 }
 

@@ -251,6 +251,15 @@
                 </a-input>
               </a-form-item>
             </a-col>
+            <a-col :xs="24" :sm="12" :md="3">
+              <a-form-item label="保存告警图片">
+                <a-select v-model:value="form.save_alert_image" size="large" placeholder="使用全局配置">
+                  <a-select-option :value="null">使用全局配置</a-select-option>
+                  <a-select-option :value="true">保存</a-select-option>
+                  <a-select-option :value="false">不保存</a-select-option>
+                </a-select>
+              </a-form-item>
+            </a-col>
           </a-row>
           <a-form-item>
             <a-button type="primary" size="large" @click="onAdd" :loading="loading">
@@ -327,6 +336,29 @@
             <span>
               <FolderOutlined /> {{ record.output_path }}
             </span>
+          </template>
+          <template v-else-if="column.key==='save_alert_image'">
+            <a-popover trigger="click" placement="bottom">
+              <template #content>
+                <div style="width: 150px;">
+                  <a-radio-group 
+                    :value="record.save_alert_image === true ? 'true' : (record.save_alert_image === false ? 'false' : 'null')"
+                    @change="(e) => onUpdateSaveAlertImage(record, e.target.value)"
+                  >
+                    <a-radio value="null">使用全局配置</a-radio>
+                    <a-radio value="true">保存</a-radio>
+                    <a-radio value="false">不保存</a-radio>
+                  </a-radio-group>
+                </div>
+              </template>
+              <a-tag 
+                :color="record.save_alert_image === true ? 'green' : (record.save_alert_image === false ? 'red' : 'default')"
+                style="cursor: pointer;"
+              >
+                {{ record.save_alert_image === true ? '保存' : (record.save_alert_image === false ? '不保存' : '全局') }}
+                <EditOutlined style="font-size: 10px; margin-left: 4px;" />
+              </a-tag>
+            </a-popover>
           </template>
           <template v-else-if="column.key==='action'">
             <a-space>
@@ -432,7 +464,7 @@ const config = ref({
   }
 })
 
-const form = ref({ id: '', task_type: '', rtsp_url: '', interval_ms: 1000, output_path: '' })
+const form = ref({ id: '', task_type: '', rtsp_url: '', interval_ms: 1000, output_path: '', save_alert_image: null })
 const loading = ref(false)
 const configLoading = ref(false)
 const configLoadSuccess = ref(false)
@@ -454,6 +486,7 @@ const columns = [
   { title: '状态', key: 'status', width: 100 },
   { title: 'RTSP地址', key: 'rtsp_url', ellipsis: true },
   { title: '间隔', key: 'interval_ms', width: 100 },
+  { title: '保存告警图片', key: 'save_alert_image', width: 130 },
   { title: '操作', key: 'action', width: 350, fixed: 'right' },
 ]
 
@@ -630,7 +663,7 @@ const onAdd = async () => {
   try {
     await frameApi.addTask(form.value)
     message.success('任务添加成功' + (config.value.store === 'minio' ? '，MinIO路径已创建' : ''))
-    form.value = { id: '', task_type: '', rtsp_url: '', interval_ms: 1000, output_path: '' }
+    form.value = { id: '', task_type: '', rtsp_url: '', interval_ms: 1000, output_path: '', save_alert_image: null }
     await fetchList()
   } catch (e) {
     message.error(e?.response?.data?.error || '添加失败')
@@ -640,7 +673,10 @@ const onAdd = async () => {
 }
 
 const onEdit = (record) => {
-  form.value = { ...record }
+  form.value = { 
+    ...record, 
+    save_alert_image: record.save_alert_image !== undefined ? record.save_alert_image : null 
+  }
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
@@ -701,6 +737,29 @@ const onUpdateInterval = async (record) => {
     delete editingInterval.value[record.id]
   } catch (e) {
     message.error(e?.response?.data?.error || '更新失败')
+  }
+}
+
+const onUpdateSaveAlertImage = async (record, value) => {
+  const loadingKey = record.id + '_save'
+  taskActionLoading.value[loadingKey] = true
+  try {
+    let newValue = null
+    if (value === 'true') {
+      newValue = true
+    } else if (value === 'false') {
+      newValue = false
+    } else {
+      newValue = null
+    }
+    await frameApi.updateSaveAlertImage(record.id, newValue)
+    const statusText = newValue === true ? '保存' : (newValue === false ? '不保存' : '使用全局配置')
+    message.success(`保存告警图片设置已更新为：${statusText}`)
+    await fetchList()
+  } catch (e) {
+    message.error(e?.response?.data?.error || '更新失败')
+  } finally {
+    taskActionLoading.value[loadingKey] = false
   }
 }
 

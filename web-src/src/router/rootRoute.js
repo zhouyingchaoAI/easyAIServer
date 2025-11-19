@@ -107,6 +107,16 @@ const RootRoute = {
         namePath: ['AIServices'],
       },
     },
+    {
+      path: '/ai-analysis/minio-monitor',
+      name: 'MinIOMonitor',
+      component: () => import('@/views/ai-analysis/minio-monitor.vue'),
+      meta: {
+        title: 'MinIO监控',
+        icon: 'mdi:database',
+        namePath: ['MinIOMonitor'],
+      },
+    },
     // 隐藏接口文档页面
     // {
     //   path: '/apidoc.html',

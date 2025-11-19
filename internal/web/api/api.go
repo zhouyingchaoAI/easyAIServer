@@ -147,6 +147,27 @@ func registerApp(g gin.IRouter) {
         ok := fx.RemoveTask(id)
         c.JSON(200, gin.H{"ok": ok})
     })
+    // 更新任务的保存告警图片设置
+    fem.PUT("/tasks/:id/save_alert_image", func(c *gin.Context) {
+        id := c.Param("id")
+        var req struct {
+            SaveAlertImage *bool `json:"save_alert_image"` // nil表示使用全局配置，true/false表示任务级配置
+        }
+        if err := c.ShouldBindJSON(&req); err != nil {
+            c.JSON(400, gin.H{"error": err.Error()})
+            return
+        }
+        fx := frameextractor.GetGlobal()
+        if fx == nil {
+            c.JSON(500, gin.H{"error": "service not ready"})
+            return
+        }
+        if err := fx.UpdateTaskSaveAlertImage(id, req.SaveAlertImage); err != nil {
+            c.JSON(400, gin.H{"error": err.Error()})
+            return
+        }
+        c.JSON(200, gin.H{"ok": true})
+    })
     // 批量启动所有任务
     fem.POST("/tasks/batch/start", func(c *gin.Context) {
         fx := frameextractor.GetGlobal()

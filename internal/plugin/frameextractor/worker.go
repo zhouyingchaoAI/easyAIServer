@@ -96,6 +96,7 @@ func (s *Service) runLocalSinkLoop(task conf.FrameExtractTask) {
                 t.Stop()
                 return
             case <-t.C:
+                t.Stop() // 显式停止Timer，确保资源释放
             }
             backoff = nextBackoff(backoff, maxBackoff)
             continue
@@ -123,6 +124,7 @@ func (s *Service) runLocalSinkLoop(task conf.FrameExtractTask) {
                 t.Stop()
                 return
             case <-t.C:
+                t.Stop() // 显式停止Timer，确保资源释放
             }
             backoff = nextBackoff(backoff, maxBackoff)
         }
@@ -182,6 +184,7 @@ func (s *Service) runLocalSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
                 t.Stop()
                 return
             case <-t.C:
+                t.Stop() // 显式停止Timer，确保资源释放
             }
             backoff = nextBackoff(backoff, maxBackoff)
             continue
@@ -243,6 +246,7 @@ func (s *Service) runLocalSinkLoopCtx(task conf.FrameExtractTask, stop <-chan st
                 t.Stop()
                 return
             case <-t.C:
+                t.Stop() // 显式停止Timer，确保资源释放
             }
             backoff = nextBackoff(backoff, maxBackoff)
         }

@@ -46,7 +46,7 @@ func NewScanner(minioClient *minio.Client, bucket, basePath, alertBasePath strin
 		alertBasePath: alertBasePath,
 		processed:     make(map[string]time.Time),
 		log:           logger,
-		stopScan:      make(chan struct{}),
+		stopScan:      make(chan struct{}), // 每次创建新的channel，避免复用已关闭的channel
 	}
 }
 
@@ -146,7 +146,15 @@ func (s *Scanner) Start(intervalSec float64, onNewImages func([]ImageInfo)) {
 
 // Stop 停止扫描
 func (s *Scanner) Stop() {
-	close(s.stopScan)
+	// 使用select确保channel只关闭一次，避免panic: close of closed channel
+	select {
+	case <-s.stopScan:
+		// channel已经关闭，直接返回
+		return
+	default:
+		// channel未关闭，安全关闭
+		close(s.stopScan)
+	}
 	if s.cleanupTicker != nil {
 		s.cleanupTicker.Stop()
 	}
@@ -335,7 +343,7 @@ func (s *Scanner) isProcessed(imagePath string) bool {
 // cleanupProcessedLocked 清理过期的已处理记录（需要已加锁）
 func (s *Scanner) cleanupProcessedLocked() {
 	now := time.Now()
-	cleanupThreshold := 1 * time.Hour // 只保留最近1小时的记录
+	cleanupThreshold := 30 * time.Minute // 缩短到只保留最近30分钟的记录
 	cleanedCount := 0
 	
 	for path, processedTime := range s.processed {
@@ -361,7 +369,7 @@ func (s *Scanner) cleanupProcessed() {
 
 // startProcessedCleanup 启动定期清理
 func (s *Scanner) startProcessedCleanup() {
-	s.cleanupTicker = time.NewTicker(30 * time.Minute) // 每30分钟清理一次
+	s.cleanupTicker = time.NewTicker(5 * time.Minute) // 缩短到每5分钟清理一次
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {

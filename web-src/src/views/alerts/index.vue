@@ -10,7 +10,7 @@
       <template #extra>
         <a-space>
           <a-badge :count="selectedRowKeys.length" :offset="[10, 0]">
-            <a-button @click="fetchData" size="small">
+            <a-button @click="() => fetchData(true)" size="small">
               <template #icon><ReloadOutlined /></template>
               刷新
             </a-button>
@@ -30,7 +30,7 @@
             placeholder="任务类型" 
             allow-clear
             size="large"
-            @change="fetchData"
+            @change="() => fetchData(true)"
           >
             <a-select-option value="">全部类型</a-select-option>
             <a-select-option v-for="type in taskTypes" :key="type" :value="type">
@@ -46,7 +46,7 @@
             show-search
             size="large"
             :filter-option="filterOption"
-            @change="fetchData"
+            @change="() => fetchData(true)"
           >
             <a-select-option value="">全部任务</a-select-option>
             <a-select-option v-for="taskId in taskIds" :key="taskId" :value="taskId">
@@ -74,7 +74,7 @@
         </a-col>
         <a-col :xs="24" :sm="12" :md="5">
           <a-space>
-            <a-button type="primary" size="large" @click="fetchData">
+            <a-button type="primary" size="large" @click="() => fetchData(true)">
               <template #icon><SearchOutlined /></template>
               查询
             </a-button>
@@ -391,9 +391,15 @@ const columns = [
   { title: '操作', key: 'action', width: 150, fixed: 'right' },
 ]
 
-const fetchData = async () => {
+const fetchData = async (resetToFirstPage = false) => {
   loading.value = true
   try {
+    // 如果重置到第一页，更新filter和pagination
+    if (resetToFirstPage) {
+      filter.value.page = 1
+      pagination.value.current = 1
+    }
+    
     const { data } = await alertApi.listAlerts(filter.value)
     alerts.value = data?.items || []
     pagination.value.total = data?.total || 0

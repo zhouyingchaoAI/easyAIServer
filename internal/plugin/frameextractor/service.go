@@ -42,6 +42,13 @@ type Service struct {
     // 抽帧速率统计（每秒抽帧数量）
     frameRateStats frameRateMonitor
     frameRateMu    sync.RWMutex
+    // 清理并发控制和任务队列（深度优化）
+    cleanupSemaphore chan struct{} // 清理并发控制信号量（限制同时进行的清理操作数）
+    cleanupQueue      chan cleanupTask // 清理任务队列，避免重复清理
+    cleanupRunning    map[string]bool // 正在清理的任务ID（避免重复清理）
+    cleanupRunningMu  sync.Mutex      // 保护cleanupRunning
+    cleanupStats      cleanupStats    // 清理统计信息
+    cleanupStatsMu    sync.RWMutex    // 保护cleanupStats
 }
 
 // frameRateMonitor 抽帧速率监控器
@@ -57,6 +64,24 @@ type frameRateMonitor struct {
 type cleanupCounter struct {
     uploadCount  int       // 上传计数
     lastCleanup  time.Time // 上次清理时间
+}
+
+// cleanupTask 清理任务
+type cleanupTask struct {
+    task     conf.FrameExtractTask
+    maxCount int
+}
+
+// cleanupStats 清理统计信息
+type cleanupStats struct {
+    TotalCleanups      int64         // 总清理次数
+    TotalDeleted       int64         // 总删除数量
+    TotalSkipped       int64         // 总跳过数量（在队列中）
+    AvgCleanupTimeMs   float64       // 平均清理耗时（毫秒）
+    MaxCleanupTimeMs   int64         // 最大清理耗时（毫秒）
+    QueueSize          int           // 当前队列大小
+    ActiveCleanups     int           // 当前正在清理的任务数
+    LastCleanupTime    time.Time     // 最后清理时间
 }
 
 // SetQueueChecker 设置队列检查回调函数（用于检查图片是否在推理队列中）
@@ -144,6 +169,11 @@ type SystemMonitorInfo struct {
 }
 
 func New(cfg *conf.FrameExtractorConfig) *Service {
+    // 清理并发数：最多同时进行2个清理操作，避免MinIO压力过大
+    maxCleanupConcurrent := 2
+    // 清理队列大小：最多缓存10个清理任务，避免任务堆积
+    cleanupQueueSize := 10
+    
     return &Service{
         cfg:             cfg,
         log:             slog.Default(),
@@ -152,6 +182,13 @@ func New(cfg *conf.FrameExtractorConfig) *Service {
         cleanupCounters: make(map[string]*cleanupCounter),
         frameRateStats: frameRateMonitor{
             windowStartTime: time.Now(),
+        },
+        // 深度优化：清理并发控制和任务队列
+        cleanupSemaphore: make(chan struct{}, maxCleanupConcurrent),
+        cleanupQueue:     make(chan cleanupTask, cleanupQueueSize),
+        cleanupRunning:   make(map[string]bool),
+        cleanupStats: cleanupStats{
+            LastCleanupTime: time.Time{},
         },
     }
 }
@@ -195,6 +232,9 @@ func (s *Service) Start() error {
     }
 
     s.log.Info("frameextractor started", slog.Int("default_interval_ms", s.cfg.IntervalMs), slog.String("store", s.cfg.Store))
+
+    // 启动清理worker（深度优化：使用队列和并发控制）
+    go s.cleanupWorker()
 
     // boot predefined tasks (no decoding yet; placeholder goroutine)
     for _, t := range s.cfg.Tasks {
@@ -392,6 +432,20 @@ func (s *Service) ListTasks() []conf.FrameExtractTask {
     return out
 }
 
+// GetTaskByID returns a task by ID, or nil if not found
+func (s *Service) GetTaskByID(id string) *conf.FrameExtractTask {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    for i := range s.cfg.Tasks {
+        if s.cfg.Tasks[i].ID == id {
+            // 返回副本，避免外部修改
+            task := s.cfg.Tasks[i]
+            return &task
+        }
+    }
+    return nil
+}
+
 // findPreviewImageInMinIO 在MinIO中查找任务的preview图片
 func (s *Service) findPreviewImageInMinIO(task *conf.FrameExtractTask) string {
     if s.minio == nil {
@@ -531,6 +585,40 @@ func (s *Service) StopTaskByID(id string) error {
     if !ok {
         return fmt.Errorf("task not running")
     }
+    return nil
+}
+
+// UpdateTaskSaveAlertImage updates save_alert_image setting for a task
+func (s *Service) UpdateTaskSaveAlertImage(id string, saveAlertImage *bool) error {
+    s.mu.Lock()
+    var task *conf.FrameExtractTask
+    for i := range s.cfg.Tasks {
+        if s.cfg.Tasks[i].ID == id {
+            task = &s.cfg.Tasks[i]
+            break
+        }
+    }
+    s.mu.Unlock()
+    
+    if task == nil {
+        return fmt.Errorf("task not found")
+    }
+    
+    // update save_alert_image setting
+    s.mu.Lock()
+    task.SaveAlertImage = saveAlertImage
+    s.mu.Unlock()
+    
+    // persist to config file
+    if err := s.saveConfigToFile(s.configPath); err != nil {
+        s.log.Warn("failed to persist config", slog.String("err", err.Error()))
+        return err
+    }
+    
+    s.log.Info("task save_alert_image updated",
+        slog.String("task_id", id),
+        slog.Any("save_alert_image", saveAlertImage))
+    
     return nil
 }
 
@@ -864,6 +952,24 @@ func (s *Service) GetPresignedURL(objectPath string, expiry time.Duration) (stri
 	}
 	
 	return presignedURL.String(), nil
+}
+
+// GetCleanupStats 获取清理统计信息（深度优化新增）
+func (s *Service) GetCleanupStats() cleanupStats {
+	s.cleanupStatsMu.RLock()
+	defer s.cleanupStatsMu.RUnlock()
+	
+	// 返回副本，避免外部修改
+	return cleanupStats{
+		TotalCleanups:    s.cleanupStats.TotalCleanups,
+		TotalDeleted:     s.cleanupStats.TotalDeleted,
+		TotalSkipped:     s.cleanupStats.TotalSkipped,
+		AvgCleanupTimeMs: s.cleanupStats.AvgCleanupTimeMs,
+		MaxCleanupTimeMs: s.cleanupStats.MaxCleanupTimeMs,
+		QueueSize:        len(s.cleanupQueue),
+		ActiveCleanups:   s.cleanupStats.ActiveCleanups,
+		LastCleanupTime:  s.cleanupStats.LastCleanupTime,
+	}
 }
 
 // GetStats 获取监控统计信息

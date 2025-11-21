@@ -340,3 +340,6 @@ alert_image_move_concurrent = 50  # 图片移动最大并发数，默认: 50
 alert_batch_enabled = true  # 启用批量写入（建议开启，可提升性能2-4倍）
 alert_batch_size = 100  # 批量大小：达到此数量时触发写入
 alert_batch_interval_sec = 2  # 刷新间隔：每隔N秒自动写入（即使未达到批量大小）
+
+# 数据库限制配置
+max_alerts_in_db = 1000  # 数据库中最多保存的告警记录数，超过此数量会自动删除最旧的记录，保留最新的。默认: 1000，0表示不限制

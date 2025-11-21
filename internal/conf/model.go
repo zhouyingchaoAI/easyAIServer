@@ -460,6 +460,9 @@ type AIAnalysisConfig struct {
 	
 	// 图片移动配置
 	AlertImageMoveConcurrent int `json:"alert_image_move_concurrent" mapstructure:"alert_image_move_concurrent"` // 图片移动最大并发数，默认: 50
+	
+	// 数据库限制配置
+	MaxAlertsInDB int `json:"max_alerts_in_db" mapstructure:"max_alerts_in_db"` // 数据库中最多保存的告警记录数，超过自动删除最旧的，默认: 1000，0表示不限制
 }
 
 // AlgorithmService 算法服务注册信息

@@ -9,7 +9,47 @@ import (
 
 // CreateAlert 创建告警记录
 func CreateAlert(alert *model.Alert) error {
-	return GetDatabase().Create(alert).Error
+	return CreateAlertWithLimit(alert, 0)
+}
+
+// CreateAlertWithLimit 创建告警记录，并限制数据库中的记录数
+// maxAlerts: 最大告警记录数，超过此数量会删除最旧的记录，0表示不限制
+func CreateAlertWithLimit(alert *model.Alert, maxAlerts int) error {
+	db := GetDatabase()
+	
+	// 如果设置了限制，先检查并删除旧记录
+	if maxAlerts > 0 {
+		var count int64
+		if err := db.Model(&model.Alert{}).Count(&count).Error; err != nil {
+			return err
+		}
+		
+		// 如果当前记录数达到或超过限制，删除最旧的记录
+		if count >= int64(maxAlerts) {
+			// 计算需要删除的数量（保留 maxAlerts - 1 条，为新记录留出空间）
+			deleteCount := int(count) - maxAlerts + 1
+			if deleteCount > 0 {
+				// 删除最旧的记录（按 created_at 和 id 排序，删除最早的）
+				// 使用子查询找到最旧的记录ID
+				var oldIDs []uint
+				if err := db.Model(&model.Alert{}).
+					Order("created_at ASC, id ASC").
+					Limit(deleteCount).
+					Pluck("id", &oldIDs).Error; err != nil {
+					return err
+				}
+				
+				if len(oldIDs) > 0 {
+					if err := db.Delete(&model.Alert{}, oldIDs).Error; err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	
+	// 创建新记录
+	return db.Create(alert).Error
 }
 
 // ListAlerts 查询告警列表
@@ -118,18 +158,19 @@ func MigrateAlertTable() error {
 
 // AlertBatchWriter 批量写入告警记录
 type AlertBatchWriter struct {
-	buffer    []*model.Alert
-	mu        sync.Mutex
-	batchSize int
-	interval  time.Duration
-	stopCh    chan struct{}
-	wg        sync.WaitGroup
-	log       *slog.Logger
-	enabled   bool
+	buffer      []*model.Alert
+	mu          sync.Mutex
+	batchSize   int
+	interval    time.Duration
+	stopCh      chan struct{}
+	wg          sync.WaitGroup
+	log         *slog.Logger
+	enabled     bool
+	maxAlertsInDB int // 数据库中最多保存的告警记录数，0表示不限制
 }
 
 // NewAlertBatchWriter 创建批量写入器
-func NewAlertBatchWriter(batchSize int, intervalSec int, enabled bool, logger *slog.Logger) *AlertBatchWriter {
+func NewAlertBatchWriter(batchSize int, intervalSec int, enabled bool, maxAlertsInDB int, logger *slog.Logger) *AlertBatchWriter {
 	if batchSize <= 0 {
 		batchSize = 100
 	}
@@ -138,12 +179,13 @@ func NewAlertBatchWriter(batchSize int, intervalSec int, enabled bool, logger *s
 	}
 	
 	return &AlertBatchWriter{
-		buffer:    make([]*model.Alert, 0, batchSize),
-		batchSize: batchSize,
-		interval:  time.Duration(intervalSec) * time.Second,
-		stopCh:    make(chan struct{}),
-		log:       logger,
-		enabled:   enabled,
+		buffer:        make([]*model.Alert, 0, batchSize),
+		batchSize:     batchSize,
+		interval:      time.Duration(intervalSec) * time.Second,
+		stopCh:        make(chan struct{}),
+		log:           logger,
+		enabled:       enabled,
+		maxAlertsInDB: maxAlertsInDB,
 	}
 }
 
@@ -179,7 +221,7 @@ func (w *AlertBatchWriter) Stop() {
 func (w *AlertBatchWriter) Add(alert *model.Alert) error {
 	if !w.enabled {
 		// 批量写入未启用，直接写入
-		return CreateAlert(alert)
+		return CreateAlertWithLimit(alert, w.maxAlertsInDB)
 	}
 	
 	w.mu.Lock()
@@ -226,6 +268,43 @@ func (w *AlertBatchWriter) flush() {
 	w.buffer = w.buffer[:0]
 	w.mu.Unlock()
 	
+	// 如果设置了限制，先检查并删除旧记录
+	if w.maxAlertsInDB > 0 {
+		db := GetDatabase()
+		var count int64
+		if err := db.Model(&model.Alert{}).Count(&count).Error; err != nil {
+			w.log.Error("failed to count alerts before flush",
+				slog.String("err", err.Error()))
+		} else {
+			// 如果当前记录数加上新记录数会超过限制，删除最旧的记录
+			totalAfterInsert := int(count) + len(toFlush)
+			if totalAfterInsert > w.maxAlertsInDB {
+				deleteCount := totalAfterInsert - w.maxAlertsInDB
+				if deleteCount > 0 {
+					// 删除最旧的记录（按 created_at 和 id 排序，删除最早的）
+					var oldIDs []uint
+					if err := db.Model(&model.Alert{}).
+						Order("created_at ASC, id ASC").
+						Limit(deleteCount).
+						Pluck("id", &oldIDs).Error; err != nil {
+						w.log.Error("failed to find old alerts to delete",
+							slog.String("err", err.Error()))
+					} else if len(oldIDs) > 0 {
+						if err := db.Delete(&model.Alert{}, oldIDs).Error; err != nil {
+							w.log.Error("failed to delete old alerts",
+								slog.Int("count", len(oldIDs)),
+								slog.String("err", err.Error()))
+						} else {
+							w.log.Info("deleted old alerts to maintain limit",
+								slog.Int("deleted_count", len(oldIDs)),
+								slog.Int("max_alerts_in_db", w.maxAlertsInDB))
+						}
+					}
+				}
+			}
+		}
+	}
+	
 	// 批量插入
 	startTime := time.Now()
 	err := GetDatabase().CreateInBatches(toFlush, len(toFlush)).Error
@@ -241,7 +320,7 @@ func (w *AlertBatchWriter) flush() {
 		w.log.Info("trying to insert alerts one by one as fallback")
 		successCount := 0
 		for _, alert := range toFlush {
-			if err := CreateAlert(alert); err == nil {
+			if err := CreateAlertWithLimit(alert, w.maxAlertsInDB); err == nil {
 				successCount++
 			}
 		}

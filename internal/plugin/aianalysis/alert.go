@@ -41,6 +41,7 @@ type SystemAlert struct {
 type AlertManager struct {
 	alerts        []SystemAlert
 	maxAlerts     int
+	maxAlertsInDB int // 数据库中最多保存的告警记录数，0表示不限制
 	mu            sync.RWMutex
 	log           *slog.Logger
 	webhookURL    string
@@ -48,15 +49,16 @@ type AlertManager struct {
 }
 
 // NewAlertManager 创建告警管理器
-func NewAlertManager(maxAlerts int, logger *slog.Logger) *AlertManager {
+func NewAlertManager(maxAlerts int, maxAlertsInDB int, logger *slog.Logger) *AlertManager {
 	if maxAlerts <= 0 {
 		maxAlerts = 1000
 	}
 	
 	return &AlertManager{
-		alerts:    make([]SystemAlert, 0, maxAlerts),
-		maxAlerts: maxAlerts,
-		log:       logger,
+		alerts:        make([]SystemAlert, 0, maxAlerts),
+		maxAlerts:     maxAlerts,
+		maxAlertsInDB: maxAlertsInDB,
+		log:           logger,
 	}
 }
 
@@ -104,7 +106,7 @@ func (am *AlertManager) saveToDatabase(alert SystemAlert) {
 		CreatedAt:      alert.Timestamp,
 	}
 	
-	if err := data.CreateAlert(dbAlert); err != nil {
+	if err := data.CreateAlertWithLimit(dbAlert, am.maxAlertsInDB); err != nil {
 		am.log.Error("failed to save system alert to database",
 			slog.String("err", err.Error()))
 	}

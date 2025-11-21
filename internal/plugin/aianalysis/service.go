@@ -121,7 +121,11 @@ func (s *Service) Start() error {
 	)
 
 	// 初始化告警管理器
-	s.alertMgr = NewAlertManager(1000, s.log)
+	maxAlertsInDB := s.cfg.MaxAlertsInDB
+	if maxAlertsInDB <= 0 {
+		maxAlertsInDB = 1000 // 默认1000条
+	}
+	s.alertMgr = NewAlertManager(1000, maxAlertsInDB, s.log)
 
 	// 设置告警回调
 	s.queue.SetAlertCallback(func(alert AlertInfo) {
@@ -161,10 +165,12 @@ func (s *Service) Start() error {
 	if batchInterval <= 0 {
 		batchInterval = 2
 	}
+	// maxAlertsInDB 已在上面声明，直接使用
 	s.alertBatchWriter = data.NewAlertBatchWriter(
 		batchSize,
 		batchInterval,
 		s.cfg.AlertBatchEnabled,
+		maxAlertsInDB,
 		s.log.With(slog.String("component", "alert_batch_writer")),
 	)
 	s.alertBatchWriter.Start()
@@ -414,10 +420,21 @@ func (s *Service) periodicStatsLoop() {
 		queueStats := s.queue.GetStats()
 		perfStats := s.monitor.GetStats()
 
-		// 记录统计日志
+		// 获取实际并发数
+		var activeInferences int32
+		var maxConcurrent int
+		if s.scheduler != nil {
+			activeInferences = s.scheduler.GetActiveInferenceCount()
+			maxConcurrent = s.scheduler.GetMaxConcurrent()
+		}
+
+		// 记录统计日志（包含实际并发数）
 		s.log.Info("performance statistics",
 			slog.Any("queue", queueStats),
-			slog.Any("performance", perfStats))
+			slog.Any("performance", perfStats),
+			slog.Int("active_inferences", int(activeInferences)),
+			slog.Int("max_concurrent", maxConcurrent),
+			slog.Float64("concurrency_utilization", float64(activeInferences)/float64(maxConcurrent)))
 
 		// 检查丢弃率
 		dropRate := s.queue.GetDropRate()

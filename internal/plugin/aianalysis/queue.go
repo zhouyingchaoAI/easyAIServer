@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -19,13 +20,24 @@ const (
 	StrategyLatestOnly QueueStrategy = "latest_only" // 只保留最新的N张
 )
 
-// InferenceQueue 智能推理队列
+// InferenceQueue 智能推理队列（使用Channel+Map+原子计数器混合方案）
 type InferenceQueue struct {
-	images           []ImageInfo
-	imageSet         map[string]bool // 用于快速检查图片是否已在队列中（path -> bool）
+	// Channel作为主队列（无锁Pop）
+	ch chan ImageInfo
+	
+	// Map用于快速查找（用于Contains、Remove、GetImagePaths）
+	imageSet    map[string]bool // 用于快速检查图片是否已在队列中（path -> bool）
+	imageSetMu  sync.RWMutex    // 保护imageSet
+	
+	// 已删除标记（用于Remove操作）
+	deletedSet    map[string]bool // 标记为已删除的图片路径
+	deletedSetMu  sync.RWMutex    // 保护deletedSet
+	
+	// 原子计数器（用于Size统计）
+	sizeCounter int64 // 队列大小计数器（原子操作）
+	
 	maxSize          int
 	strategy         QueueStrategy
-	mu               sync.RWMutex
 	droppedCount     int64
 	processedCount   int64 // 已处理的图片数量（包括成功和失败的推理）
 	lastAlertTime    time.Time
@@ -48,7 +60,7 @@ type AlertInfo struct {
 	Timestamp time.Time
 }
 
-// NewInferenceQueue 创建智能队列
+// NewInferenceQueue 创建智能队列（使用Channel+Map+原子计数器）
 func NewInferenceQueue(maxSize int, strategy QueueStrategy, alertThreshold int, minioClient *minio.Client, bucket string, deleteDropped bool, logger *slog.Logger) *InferenceQueue {
 	if maxSize <= 0 {
 		maxSize = 100
@@ -58,16 +70,18 @@ func NewInferenceQueue(maxSize int, strategy QueueStrategy, alertThreshold int, 
 	}
 	
 	return &InferenceQueue{
-		images:         make([]ImageInfo, 0, maxSize),
-		imageSet:       make(map[string]bool),
-		maxSize:        maxSize,
-		strategy:       strategy,
+		ch:            make(chan ImageInfo, maxSize), // buffered channel，容量=maxSize
+		imageSet:      make(map[string]bool),
+		deletedSet:    make(map[string]bool),
+		sizeCounter:   0,
+		maxSize:       maxSize,
+		strategy:      strategy,
 		alertThreshold: alertThreshold,
-		alertInterval:  60 * time.Second,
-		log:            logger,
-		minio:          minioClient,
-		bucket:         bucket,
-		deleteDropped:  deleteDropped,
+		alertInterval: 60 * time.Second,
+		log:           logger,
+		minio:         minioClient,
+		bucket:        bucket,
+		deleteDropped: deleteDropped,
 	}
 }
 
@@ -76,50 +90,58 @@ func (q *InferenceQueue) SetAlertCallback(callback func(AlertInfo)) {
 	q.alertCallback = callback
 }
 
-// Add 添加图片到队列
+// Add 添加图片到队列（使用Channel+Map）
 func (q *InferenceQueue) Add(images []ImageInfo) int {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	
 	added := 0
 	duplicateCount := 0
+	
 	for _, img := range images {
 		// 规范化路径格式（确保与MinIO key格式一致）
 		normalizedPath := filepath.ToSlash(img.Path)
 		
-		// 检查图片是否已在队列中（去重）
+		// 检查图片是否已在队列中（去重）- 使用Map
+		q.imageSetMu.RLock()
 		if q.imageSet[normalizedPath] {
+			q.imageSetMu.RUnlock()
 			duplicateCount++
 			continue
 		}
+		q.imageSetMu.RUnlock()
 		
-		// 检查队列是否已满
-		if len(q.images) >= q.maxSize {
+		// 检查队列是否已满（使用原子计数器）
+		currentSize := atomic.LoadInt64(&q.sizeCounter)
+		if int(currentSize) >= q.maxSize {
 			switch q.strategy {
 			case StrategyDropOldest:
-				// 丢弃最旧的
-				dropped := q.images[0]
-				// 从imageSet中移除（规范化路径）
-				normalizedDroppedPath := filepath.ToSlash(dropped.Path)
-				delete(q.imageSet, normalizedDroppedPath)
-				q.images = q.images[1:]
-				q.droppedCount++
-				
-				// 删除MinIO中的图片
-				if q.deleteDropped {
-					q.deleteImageFromMinIO(dropped)
+				// 丢弃最旧的：从Channel中Pop一个（非阻塞）
+				select {
+				case dropped := <-q.ch:
+					// 从imageSet中移除
+					normalizedDroppedPath := filepath.ToSlash(dropped.Path)
+					q.imageSetMu.Lock()
+					delete(q.imageSet, normalizedDroppedPath)
+					q.imageSetMu.Unlock()
+					atomic.AddInt64(&q.sizeCounter, -1)
+					atomic.AddInt64(&q.droppedCount, 1)
+					
+					// 删除MinIO中的图片
+					if q.deleteDropped {
+						q.deleteImageFromMinIO(dropped)
+					}
+					
+					q.log.Warn("queue full, dropped oldest image",
+						slog.String("task_type", dropped.TaskType),
+						slog.String("task_id", dropped.TaskID),
+						slog.String("image", dropped.Filename),
+						slog.Int64("queue_size", atomic.LoadInt64(&q.sizeCounter)),
+						slog.Int64("total_dropped", atomic.LoadInt64(&q.droppedCount)))
+				default:
+					// Channel为空，直接添加
 				}
-				
-				q.log.Warn("queue full, dropped oldest image",
-					slog.String("task_type", dropped.TaskType),
-					slog.String("task_id", dropped.TaskID),
-					slog.String("image", dropped.Filename),
-					slog.Int("queue_size", len(q.images)),
-					slog.Int64("total_dropped", q.droppedCount))
 				
 			case StrategyDropNewest:
 				// 丢弃新的（不加入）
-				q.droppedCount++
+				atomic.AddInt64(&q.droppedCount, 1)
 				
 				// 删除MinIO中的图片
 				if q.deleteDropped {
@@ -132,30 +154,54 @@ func (q *InferenceQueue) Add(images []ImageInfo) int {
 				
 			case StrategyLatestOnly:
 				// 清空队列，只保留最新的
-				oldImages := make([]ImageInfo, len(q.images))
-				copy(oldImages, q.images)
-				oldLen := len(q.images)
-				// 清空imageSet
-				q.imageSet = make(map[string]bool)
-				q.images = q.images[:0]
-				q.droppedCount += int64(oldLen)
-				
-				// 批量删除MinIO中的图片
-				if q.deleteDropped {
-					for _, droppedImg := range oldImages {
-						q.deleteImageFromMinIO(droppedImg)
+				cleared := 0
+				for {
+					select {
+					case dropped := <-q.ch:
+						// 从imageSet中移除
+						normalizedDroppedPath := filepath.ToSlash(dropped.Path)
+						q.imageSetMu.Lock()
+						delete(q.imageSet, normalizedDroppedPath)
+						q.imageSetMu.Unlock()
+						atomic.AddInt64(&q.sizeCounter, -1)
+						cleared++
+						
+						// 删除MinIO中的图片
+						if q.deleteDropped {
+							q.deleteImageFromMinIO(dropped)
+						}
+					default:
+						// Channel已空
+						goto cleared
 					}
 				}
-				
+			cleared:
+				atomic.AddInt64(&q.droppedCount, int64(cleared))
 				q.log.Warn("queue full, cleared for latest images",
-					slog.Int("cleared", oldLen))
+					slog.Int("cleared", cleared))
 			}
 		}
 		
-		// 添加到队列和imageSet（使用规范化路径）
-		q.images = append(q.images, img)
-		q.imageSet[normalizedPath] = true
-		added++
+		// 添加到Channel（非阻塞）
+		select {
+		case q.ch <- img:
+			// 成功添加到Channel
+			// 更新imageSet
+			q.imageSetMu.Lock()
+			q.imageSet[normalizedPath] = true
+			q.imageSetMu.Unlock()
+			atomic.AddInt64(&q.sizeCounter, 1)
+			added++
+		default:
+			// Channel已满（理论上不应该发生，因为上面已经处理了）
+			// 如果发生，按策略处理
+			if q.strategy == StrategyDropNewest {
+				atomic.AddInt64(&q.droppedCount, 1)
+				if q.deleteDropped {
+					q.deleteImageFromMinIO(img)
+				}
+			}
+		}
 	}
 	
 	// 如果发现重复图片，记录日志
@@ -167,68 +213,108 @@ func (q *InferenceQueue) Add(images []ImageInfo) int {
 	}
 	
 	// 检查积压告警
-	q.checkBacklogAlertLocked()
+	q.checkBacklogAlert()
 	
 	return added
 }
 
-// Pop 取出一张图片
+// Pop 取出一张图片（无锁！使用Channel）
 func (q *InferenceQueue) Pop() (ImageInfo, bool) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	
-	if len(q.images) == 0 {
-		return ImageInfo{}, false
+	// 使用Channel非阻塞读取（无锁！）
+	for {
+		select {
+		case img := <-q.ch:
+			// 检查是否已标记为删除
+			normalizedPath := filepath.ToSlash(img.Path)
+			q.deletedSetMu.RLock()
+			if q.deletedSet[normalizedPath] {
+				// 已删除，从deletedSet中移除，继续Pop下一个
+				q.deletedSetMu.RUnlock()
+				q.deletedSetMu.Lock()
+				delete(q.deletedSet, normalizedPath)
+				q.deletedSetMu.Unlock()
+				atomic.AddInt64(&q.sizeCounter, -1)
+				// 从imageSet中移除
+				q.imageSetMu.Lock()
+				delete(q.imageSet, normalizedPath)
+				q.imageSetMu.Unlock()
+				continue // 继续Pop下一个
+			}
+			q.deletedSetMu.RUnlock()
+			
+			// 正常处理：从imageSet中移除
+			q.imageSetMu.Lock()
+			delete(q.imageSet, normalizedPath)
+			q.imageSetMu.Unlock()
+			atomic.AddInt64(&q.sizeCounter, -1)
+			
+			// 注意：不在Pop时增加processedCount，只在推理成功或失败后增加
+			// 这样可以确保processedCount更准确地反映实际推理的数量
+			
+			return img, true
+		default:
+			// Channel为空，返回false
+			return ImageInfo{}, false
+		}
 	}
-	
-	img := q.images[0]
-	// 从imageSet中移除（规范化路径）
-	normalizedPath := filepath.ToSlash(img.Path)
-	delete(q.imageSet, normalizedPath)
-	q.images = q.images[1:]
-	// 注意：不在Pop时增加processedCount，只在推理成功或失败后增加
-	// 这样可以确保processedCount更准确地反映实际推理的数量
-	
-	return img, true
 }
 
-// PopBatch 批量取出
+// PopBatch 批量取出（使用Channel，无锁）
 func (q *InferenceQueue) PopBatch(n int) []ImageInfo {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	batch := make([]ImageInfo, 0, n)
 	
-	if len(q.images) == 0 {
-		return nil
-	}
-	
-	if n > len(q.images) {
-		n = len(q.images)
-	}
-	
-	batch := make([]ImageInfo, n)
-	copy(batch, q.images[:n])
-	// 从imageSet中移除
+	// 从Channel中批量读取
 	for i := 0; i < n; i++ {
-		delete(q.imageSet, q.images[i].Path)
+		select {
+		case img := <-q.ch:
+			// 检查是否已标记为删除
+			normalizedPath := filepath.ToSlash(img.Path)
+			q.deletedSetMu.RLock()
+			if q.deletedSet[normalizedPath] {
+				// 已删除，跳过
+				q.deletedSetMu.RUnlock()
+				q.deletedSetMu.Lock()
+				delete(q.deletedSet, normalizedPath)
+				q.deletedSetMu.Unlock()
+				atomic.AddInt64(&q.sizeCounter, -1)
+				// 从imageSet中移除
+				q.imageSetMu.Lock()
+				delete(q.imageSet, normalizedPath)
+				q.imageSetMu.Unlock()
+				continue
+			}
+			q.deletedSetMu.RUnlock()
+			
+			// 正常处理
+			q.imageSetMu.Lock()
+			delete(q.imageSet, normalizedPath)
+			q.imageSetMu.Unlock()
+			atomic.AddInt64(&q.sizeCounter, -1)
+			batch = append(batch, img)
+		default:
+			// Channel为空，返回已读取的
+			break
+		}
 	}
-	q.images = q.images[n:]
+	
 	// 注意：不在PopBatch时增加processedCount，只在推理成功或失败后增加
 	// 这样可以确保processedCount更准确地反映实际推理的数量
 	
+	if len(batch) == 0 {
+		return nil
+	}
 	return batch
 }
 
-// Size 获取当前队列大小
+// Size 获取当前队列大小（使用原子计数器）
 func (q *InferenceQueue) Size() int {
-	q.mu.RLock()
-	defer q.mu.RUnlock()
-	return len(q.images)
+	return int(atomic.LoadInt64(&q.sizeCounter))
 }
 
 // GetImagePaths 获取队列中所有图片的路径集合（用于清理时排除）
 func (q *InferenceQueue) GetImagePaths() map[string]bool {
-	q.mu.RLock()
-	defer q.mu.RUnlock()
+	q.imageSetMu.RLock()
+	defer q.imageSetMu.RUnlock()
 	
 	// 返回imageSet的副本，避免外部修改
 	paths := make(map[string]bool, len(q.imageSet))
@@ -238,36 +324,53 @@ func (q *InferenceQueue) GetImagePaths() map[string]bool {
 	return paths
 }
 
-// Contains 检查图片是否在队列中
+// Contains 检查图片是否在队列中（使用Map）
 func (q *InferenceQueue) Contains(imagePath string) bool {
-	q.mu.RLock()
-	defer q.mu.RUnlock()
+	q.imageSetMu.RLock()
+	defer q.imageSetMu.RUnlock()
 	// 规范化路径格式（确保与MinIO key格式一致）
 	normalizedPath := filepath.ToSlash(imagePath)
 	return q.imageSet[normalizedPath]
 }
 
-// Clear 清空队列
+// Clear 清空队列（循环读取Channel）
 func (q *InferenceQueue) Clear() int {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	cleared := 0
 	
-	cleared := len(q.images)
-	q.images = q.images[:0]
+	// 循环读取Channel直到为空
+	for {
+		select {
+		case <-q.ch:
+			cleared++
+			atomic.AddInt64(&q.sizeCounter, -1)
+		default:
+			// Channel已空
+			goto done
+		}
+	}
+	
+done:
+	// 清空Map
+	q.imageSetMu.Lock()
 	q.imageSet = make(map[string]bool)
+	q.imageSetMu.Unlock()
+	
+	q.deletedSetMu.Lock()
+	q.deletedSet = make(map[string]bool)
+	q.deletedSetMu.Unlock()
+	
 	return cleared
 }
 
 // RecordProcessed 记录一次处理（推理成功或失败后调用）
 func (q *InferenceQueue) RecordProcessed() {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.processedCount++
+	atomic.AddInt64(&q.processedCount, 1)
 }
 
-// checkBacklogAlertLocked 检查积压告警（需要已加锁）
-func (q *InferenceQueue) checkBacklogAlertLocked() {
-	if len(q.images) <= q.alertThreshold {
+// checkBacklogAlert 检查积压告警（使用原子计数器）
+func (q *InferenceQueue) checkBacklogAlert() {
+	currentSize := int(atomic.LoadInt64(&q.sizeCounter))
+	if currentSize <= q.alertThreshold {
 		return
 	}
 	
@@ -282,15 +385,15 @@ func (q *InferenceQueue) checkBacklogAlertLocked() {
 		Type:      "queue_backlog",
 		Level:     "warning",
 		Message:   "推理队列积压严重，建议增加并发数或降低抽帧频率",
-		QueueSize: len(q.images),
-		Dropped:   q.droppedCount,
+		QueueSize: currentSize,
+		Dropped:   atomic.LoadInt64(&q.droppedCount),
 		Timestamp: now,
 	}
 	
 	q.log.Error("inference backlog alert",
-		slog.Int("queue_size", len(q.images)),
+		slog.Int("queue_size", currentSize),
 		slog.Int("threshold", q.alertThreshold),
-		slog.Int64("dropped_total", q.droppedCount),
+		slog.Int64("dropped_total", atomic.LoadInt64(&q.droppedCount)),
 		slog.String("message", alert.Message))
 	
 	// 触发告警回调
@@ -299,80 +402,78 @@ func (q *InferenceQueue) checkBacklogAlertLocked() {
 	}
 }
 
-// Remove 从队列中移除指定路径的图片
+// Remove 从队列中移除指定路径的图片（使用标记删除法）
 func (q *InferenceQueue) Remove(imagePath string) bool {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	
 	// 规范化路径格式
 	normalizedPath := filepath.ToSlash(imagePath)
 	
 	// 检查图片是否在队列中
+	q.imageSetMu.RLock()
 	if !q.imageSet[normalizedPath] {
+		q.imageSetMu.RUnlock()
 		return false
 	}
+	q.imageSetMu.RUnlock()
 	
-	// 从队列中查找并移除
-	for i, img := range q.images {
-		if filepath.ToSlash(img.Path) == normalizedPath {
-			// 从imageSet中移除
-			delete(q.imageSet, normalizedPath)
-			// 从队列中移除
-			q.images = append(q.images[:i], q.images[i+1:]...)
-			q.log.Debug("removed image from queue",
-				slog.String("path", imagePath),
-				slog.Int("remaining_queue_size", len(q.images)))
-			return true
-		}
-	}
+	// 标记为已删除（Pop时会跳过）
+	q.deletedSetMu.Lock()
+	q.deletedSet[normalizedPath] = true
+	q.deletedSetMu.Unlock()
 	
-	return false
+	// 从imageSet中移除（立即移除，避免Contains返回true）
+	q.imageSetMu.Lock()
+	delete(q.imageSet, normalizedPath)
+	q.imageSetMu.Unlock()
+	
+	// 注意：不在这里减少sizeCounter，因为图片还在Channel中
+	// Pop时会检查deletedSet，如果已删除则跳过并减少计数器
+	// 这样可以确保sizeCounter的准确性
+	
+	q.log.Debug("removed image from queue (marked as deleted)",
+		slog.String("path", imagePath),
+		slog.Int64("remaining_queue_size", atomic.LoadInt64(&q.sizeCounter)))
+	
+	return true
 }
 
-// GetStats 获取统计信息
+// GetStats 获取统计信息（使用原子计数器）
 func (q *InferenceQueue) GetStats() map[string]interface{} {
-	q.mu.RLock()
-	defer q.mu.RUnlock()
-	
+	currentSize := int(atomic.LoadInt64(&q.sizeCounter))
 	utilization := 0.0
 	if q.maxSize > 0 {
-		utilization = float64(len(q.images)) / float64(q.maxSize)
+		utilization = float64(currentSize) / float64(q.maxSize)
 	}
 	
 	return map[string]interface{}{
-		"queue_size":     len(q.images),
+		"queue_size":     currentSize,
 		"max_size":       q.maxSize,
-		"dropped_total":  q.droppedCount,
-		"processed_total": q.processedCount,
+		"dropped_total":  atomic.LoadInt64(&q.droppedCount),
+		"processed_total": atomic.LoadInt64(&q.processedCount),
 		"utilization":    utilization,
 		"strategy":       string(q.strategy),
 	}
 }
 
-// GetDropRate 获取丢弃率
+// GetDropRate 获取丢弃率（使用原子操作）
 func (q *InferenceQueue) GetDropRate() float64 {
-	q.mu.RLock()
-	defer q.mu.RUnlock()
-	
-	total := q.processedCount + q.droppedCount
+	processed := atomic.LoadInt64(&q.processedCount)
+	dropped := atomic.LoadInt64(&q.droppedCount)
+	total := processed + dropped
 	if total == 0 {
 		return 0
 	}
 	
-	return float64(q.droppedCount) / float64(total)
+	return float64(dropped) / float64(total)
 }
 
-// ResetStats 重置统计数据
+// ResetStats 重置统计数据（使用原子操作）
 func (q *InferenceQueue) ResetStats() {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	
-	q.droppedCount = 0
-	q.processedCount = 0
+	atomic.StoreInt64(&q.droppedCount, 0)
+	atomic.StoreInt64(&q.processedCount, 0)
 	q.lastAlertTime = time.Time{}
 	
 	q.log.Info("inference queue stats reset",
-		slog.Int("remaining_queue_size", len(q.images)))
+		slog.Int64("remaining_queue_size", atomic.LoadInt64(&q.sizeCounter)))
 }
 
 // deleteImageFromMinIO 删除MinIO中的图片

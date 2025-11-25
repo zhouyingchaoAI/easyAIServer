@@ -199,9 +199,9 @@
                 </a-input>
               </a-form-item>
             </a-col>
-            <a-col :xs="24" :sm="12" :md="5">
-              <a-form-item label="任务类型" :required="true">
-                <a-select v-model:value="form.task_type" size="large" placeholder="选择类型">
+          <a-col :xs="24" :sm="12" :md="5">
+            <a-form-item label="任务类型" :required="true">
+              <a-select v-model:value="form.task_type" size="large" placeholder="选择类型" @change="handleTaskTypeChange">
                   <a-select-option v-for="type in taskTypes" :key="type" :value="type">
                     {{ type }}
                   </a-select-option>
@@ -249,6 +249,39 @@
                 <a-input v-model:value="form.output_path" size="large" placeholder="cam1">
                   <template #prefix><FolderOutlined /></template>
                 </a-input>
+              </a-form-item>
+            </a-col>
+            <a-col :xs="24" :sm="12" :md="8" v-if="form.task_type === tripwireTaskType">
+              <a-form-item :required="true">
+                <template #label>
+                  <span>
+                    绑定算法端点
+                    <a-tooltip title="仅绊线人数统计任务需要绑定固定端点">
+                      <InfoCircleOutlined style="margin-left: 4px; color: #8c8c8c;" />
+                    </a-tooltip>
+                    <a-button 
+                      type="link"
+                      size="small"
+                      style="margin-left: 8px;"
+                      :loading="tripwireEndpointLoading"
+                      @click="fetchTripwireEndpoints"
+                    >
+                      <template #icon><ReloadOutlined /></template>
+                      刷新
+                    </a-button>
+                  </span>
+                </template>
+                <a-select
+                  v-model:value="form.preferred_algorithm_endpoint"
+                  size="large"
+                  show-search
+                  allow-clear
+                  :loading="tripwireEndpointLoading"
+                  :options="tripwireEndpointOptions"
+                  placeholder="请选择算法服务端点"
+                  option-filter-prop="label"
+                  :not-found-content="tripwireEndpointLoading ? '加载中...' : '未找到绊线算法服务'"
+                />
               </a-form-item>
             </a-col>
             <a-col :xs="24" :sm="12" :md="3">
@@ -336,6 +369,16 @@
             <span>
               <FolderOutlined /> {{ record.output_path }}
             </span>
+          </template>
+          <template v-else-if="column.key==='preferred_algorithm_endpoint'">
+            <template v-if="record.task_type === tripwireTaskType">
+              <a-tag :color="record.preferred_algorithm_endpoint ? 'blue' : 'orange'">
+                {{ record.preferred_algorithm_endpoint || '未绑定' }}
+              </a-tag>
+            </template>
+            <template v-else>
+              <span class="text-muted">-</span>
+            </template>
           </template>
           <template v-else-if="column.key==='save_alert_image'">
             <a-popover trigger="click" placement="bottom">
@@ -433,7 +476,7 @@
   </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { 
@@ -444,10 +487,19 @@ import {
   PictureOutlined, PlayCircleOutlined, PauseCircleOutlined, ReloadOutlined,
   SettingOutlined, CheckCircleOutlined, WarningOutlined
 } from '@ant-design/icons-vue'
-import { frameApi, live } from '@/api'
+import { frameApi, live, aiAnalysisApi } from '@/api'
 import AlgoConfigModal from '@/components/AlgoConfigModal/index.vue'
 
 const router = useRouter()
+const tripwireTaskType = '绊线人数统计'
+const tripwireEndpoints = ref([])
+const tripwireEndpointLoading = ref(false)
+const tripwireEndpointOptions = computed(() =>
+  tripwireEndpoints.value.map(endpoint => ({
+    label: endpoint.label,
+    value: endpoint.endpoint
+  }))
+)
 
 const config = ref({
   enable: true,
@@ -464,7 +516,7 @@ const config = ref({
   }
 })
 
-const form = ref({ id: '', task_type: '', rtsp_url: '', interval_ms: 1000, output_path: '', save_alert_image: null })
+const form = ref({ id: '', task_type: '', rtsp_url: '', interval_ms: 1000, output_path: '', save_alert_image: null, preferred_algorithm_endpoint: '' })
 const loading = ref(false)
 const configLoading = ref(false)
 const configLoadSuccess = ref(false)
@@ -478,7 +530,38 @@ const rtspOptions = ref([])
 const taskTypes = ref([])
 const algoConfigVisible = ref(false)
 const currentTask = ref({})
-
+const fetchTripwireEndpoints = async () => {
+  tripwireEndpointLoading.value = true
+  try {
+    const { data } = await aiAnalysisApi.listServices()
+    const services = data?.services || []
+    const deduped = []
+    const seen = new Set()
+    services.forEach(service => {
+      if (!service?.endpoint) {
+        return
+      }
+      const supportedTypes = service.task_types || []
+      if (!supportedTypes.includes(tripwireTaskType)) {
+        return
+      }
+      if (seen.has(service.endpoint)) {
+        return
+      }
+      seen.add(service.endpoint)
+      deduped.push({
+        endpoint: service.endpoint,
+        label: `${service.name || service.service_id} (${service.endpoint})`
+      })
+    })
+    tripwireEndpoints.value = deduped
+  } catch (e) {
+    console.error('fetch tripwire endpoints failed', e)
+    message.error('加载绊线算法端点失败')
+  } finally {
+    tripwireEndpointLoading.value = false
+  }
+}
 const columns = [
   { title: '任务ID', key: 'id', width: 120 },
   { title: '任务类型', key: 'task_type', width: 120 },
@@ -486,6 +569,7 @@ const columns = [
   { title: '状态', key: 'status', width: 100 },
   { title: 'RTSP地址', key: 'rtsp_url', ellipsis: true },
   { title: '间隔', key: 'interval_ms', width: 100 },
+  { title: '算法端点', key: 'preferred_algorithm_endpoint', width: 220 },
   { title: '保存告警图片', key: 'save_alert_image', width: 130 },
   { title: '操作', key: 'action', width: 350, fixed: 'right' },
 ]
@@ -587,6 +671,16 @@ const filterRtspOption = (input, option) => {
   return option.label.toLowerCase().includes(input.toLowerCase())
 }
 
+const handleTaskTypeChange = (value) => {
+  if (value === tripwireTaskType) {
+    if (!tripwireEndpoints.value.length) {
+      fetchTripwireEndpoints()
+    }
+  } else {
+    form.value.preferred_algorithm_endpoint = ''
+  }
+}
+
 const onStreamSelect = async (streamId, option) => {
   // if user manually typed an rtsp:// URL, keep it as is
   if (streamId && streamId.startsWith('rtsp://')) {
@@ -636,6 +730,7 @@ const fetchList = async () => {
     const hasPreview = !!task.preview_image
     return {
       ...task,
+      preferred_algorithm_endpoint: task.preferred_algorithm_endpoint || '',
       config_status: hasPreview ? 'configured' : 'pending' // 根据是否有preview设置配置状态
     }
   })
@@ -659,11 +754,15 @@ const onAdd = async () => {
     message.error('请填写任务ID、任务类型与RTSP地址')
     return
   }
+  if (form.value.task_type === tripwireTaskType && !form.value.preferred_algorithm_endpoint) {
+    message.error('绊线人数统计任务必须绑定算法端点')
+    return
+  }
   loading.value = true
   try {
     await frameApi.addTask(form.value)
     message.success('任务添加成功' + (config.value.store === 'minio' ? '，MinIO路径已创建' : ''))
-    form.value = { id: '', task_type: '', rtsp_url: '', interval_ms: 1000, output_path: '', save_alert_image: null }
+    form.value = { id: '', task_type: '', rtsp_url: '', interval_ms: 1000, output_path: '', save_alert_image: null, preferred_algorithm_endpoint: '' }
     await fetchList()
   } catch (e) {
     message.error(e?.response?.data?.error || '添加失败')
@@ -816,6 +915,7 @@ onMounted(() => {
   fetchList()
   fetchLiveStreams()
   fetchTaskTypes()
+  fetchTripwireEndpoints()
 })
 </script>
 
@@ -863,6 +963,10 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.text-muted {
+  color: #8c8c8c;
 }
 
 :deep(.ant-form-item) {

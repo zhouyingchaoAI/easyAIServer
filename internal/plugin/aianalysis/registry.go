@@ -14,24 +14,24 @@ const ResponseTimeWindow = 10
 // AlgorithmRegistry 算法服务注册中心
 type AlgorithmRegistry struct {
 	// services maps task_type -> list of algorithm services
-	services  map[string][]conf.AlgorithmService
-	mu        sync.RWMutex
-	log       *slog.Logger
-	timeout   time.Duration // heartbeat timeout
-	stopCheck chan struct{}
-	onRegisterCallback   func(serviceID string, taskTypes []string)  // 注册回调
-	onUnregisterCallback func(serviceID string, reason string)       // 注销回调
-	
+	services             map[string][]conf.AlgorithmService
+	mu                   sync.RWMutex
+	log                  *slog.Logger
+	timeout              time.Duration // heartbeat timeout
+	stopCheck            chan struct{}
+	onRegisterCallback   func(serviceID string, taskTypes []string) // 注册回调
+	onUnregisterCallback func(serviceID string, reason string)      // 注销回调
+
 	// 负载均衡：记录每个算法实例的调用次数
 	// 使用endpoint作为key，因为同一service_id可能有多个不同的endpoint实例
 	callCounters map[string]int // algorithm endpoint -> call count
-	
+
 	// 性能统计：记录每个算法实例的响应时间
 	responseTimes map[string][]int64 // algorithm endpoint -> response times (ms) in sliding window
-	
+
 	// 加权轮询：每个任务类型的当前权重计数器
 	weightCounters map[string]int // task_type -> current weight counter
-	
+
 	// Round-Robin索引：作为兜底策略
 	rrIndexes map[string]int // task_type -> round-robin index
 }
@@ -90,10 +90,10 @@ func (r *AlgorithmRegistry) Register(service conf.AlgorithmService) error {
 				slog.String("new_service_id", service.ServiceID),
 				slog.String("note", "this is normal when service re-registers"))
 		}
-		
+
 		// 添加新服务
 		r.services[taskType] = append(r.services[taskType], service)
-		
+
 		// 如果移除了旧服务，重置Round-Robin索引以确保公平分配
 		if removed {
 			r.rrIndexes[taskType] = 0
@@ -103,13 +103,13 @@ func (r *AlgorithmRegistry) Register(service conf.AlgorithmService) error {
 	// 获取当前所有唯一endpoint列表（用于调试）
 	allInstances := r.ListAllServiceInstancesLocked()
 	totalServices := len(allInstances)
-	
+
 	// 收集所有endpoint用于日志
 	endpoints := make([]string, 0, totalServices)
 	for _, inst := range allInstances {
 		endpoints = append(endpoints, inst.Endpoint)
 	}
-	
+
 	r.log.Info("algorithm service registered successfully",
 		slog.String("service_id", service.ServiceID),
 		slog.String("name", service.Name),
@@ -134,7 +134,7 @@ func (r *AlgorithmRegistry) Unregister(serviceID string) error {
 
 	found := false
 	var removedEndpoint string
-	
+
 	// 先找到endpoint（在删除之前）
 	for _, services := range r.services {
 		for _, svc := range services {
@@ -148,16 +148,16 @@ func (r *AlgorithmRegistry) Unregister(serviceID string) error {
 			break
 		}
 	}
-	
+
 	if !found {
 		return fmt.Errorf("service not found")
 	}
-	
+
 	// 从所有任务类型中移除
 	for taskType := range r.services {
 		r.removeServiceByIDLocked(serviceID, taskType)
 	}
-	
+
 	totalServices := len(r.ListAllServiceInstancesLocked())
 
 	r.log.Info("algorithm service unregistered successfully",
@@ -187,7 +187,7 @@ func (r *AlgorithmRegistry) HeartbeatWithStats(serviceID string, stats *conf.Hea
 			if services[i].ServiceID == serviceID {
 				services[i].LastHeartbeat = now
 				endpoint = services[i].Endpoint
-				
+
 				// 更新性能统计（如果提供）
 				if stats != nil {
 					services[i].TotalRequests = stats.TotalRequests
@@ -195,7 +195,7 @@ func (r *AlgorithmRegistry) HeartbeatWithStats(serviceID string, stats *conf.Hea
 					services[i].LastInferenceTimeMs = stats.LastInferenceTimeMs
 					services[i].LastTotalTimeMs = stats.LastTotalTimeMs
 				}
-				
+
 				found = true
 			}
 		}
@@ -209,7 +209,7 @@ func (r *AlgorithmRegistry) HeartbeatWithStats(serviceID string, stats *conf.Hea
 			slog.String("note", "service may need to re-register"))
 		return fmt.Errorf("service not found: %s", serviceID)
 	}
-	
+
 	if stats != nil && stats.TotalRequests > 0 {
 		r.log.Debug("heartbeat with stats received",
 			slog.String("service_id", serviceID),
@@ -248,7 +248,7 @@ func (r *AlgorithmRegistry) HeartbeatByEndpointWithStats(endpoint string, stats 
 			if services[i].Endpoint == endpoint {
 				services[i].LastHeartbeat = now
 				serviceID = services[i].ServiceID
-				
+
 				// 更新性能统计（如果提供）
 				if stats != nil {
 					services[i].TotalRequests = stats.TotalRequests
@@ -256,7 +256,7 @@ func (r *AlgorithmRegistry) HeartbeatByEndpointWithStats(endpoint string, stats 
 					services[i].LastInferenceTimeMs = stats.LastInferenceTimeMs
 					services[i].LastTotalTimeMs = stats.LastTotalTimeMs
 				}
-				
+
 				found = true
 			}
 		}
@@ -270,7 +270,7 @@ func (r *AlgorithmRegistry) HeartbeatByEndpointWithStats(endpoint string, stats 
 			slog.String("note", "service may need to re-register"))
 		return fmt.Errorf("service not found by endpoint: %s", endpoint)
 	}
-	
+
 	if stats != nil && stats.TotalRequests > 0 {
 		r.log.Debug("heartbeat with stats received by endpoint",
 			slog.String("service_id", serviceID),
@@ -327,13 +327,13 @@ func (r *AlgorithmRegistry) ListAllServices() []conf.AlgorithmService {
 // StartHeartbeatChecker 启动心跳检测
 func (r *AlgorithmRegistry) StartHeartbeatChecker() {
 	checkTicker := time.NewTicker(30 * time.Second)
-	reportTicker := time.NewTicker(5 * time.Minute)  // 每5分钟报告一次健康状态
-	
+	reportTicker := time.NewTicker(5 * time.Minute) // 每5分钟报告一次健康状态
+
 	r.log.Info("algorithm service heartbeat checker started",
 		slog.Int("check_interval_sec", 30),
 		slog.Int("timeout_sec", int(r.timeout.Seconds())),
 		slog.Int("health_report_interval_min", 5))
-	
+
 	go func() {
 		for {
 			select {
@@ -360,18 +360,18 @@ func (r *AlgorithmRegistry) StopHeartbeatChecker() {
 func (r *AlgorithmRegistry) ClearAllServices() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	// 统计清理前的服务数
 	totalBefore := len(r.ListAllServiceInstancesLocked())
-	
+
 	// 清空所有数据
 	r.services = make(map[string][]conf.AlgorithmService)
 	r.callCounters = make(map[string]int)
 	r.rrIndexes = make(map[string]int)
-	
+
 	r.log.Warn("all algorithm services cleared",
 		slog.Int("cleared_count", totalBefore))
-	
+
 	return totalBefore
 }
 
@@ -379,25 +379,25 @@ func (r *AlgorithmRegistry) ClearAllServices() int {
 func (r *AlgorithmRegistry) logHealthStatus() {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	now := time.Now().Unix()
 	totalServices := len(r.ListAllServiceInstancesLocked())
-	
+
 	if totalServices == 0 {
 		r.log.Info("algorithm services health report - no services registered")
 		return
 	}
-	
+
 	// 统计各任务类型的服务数量
 	taskTypeCount := make(map[string]int)
 	for taskType, services := range r.services {
 		taskTypeCount[taskType] = len(services)
 	}
-	
+
 	r.log.Info("algorithm services health report",
 		slog.Int("total_services", totalServices),
 		slog.Any("task_type_distribution", taskTypeCount))
-		
+
 	// 详细列出每个服务的状态
 	for _, svc := range r.ListAllServiceInstancesLocked() {
 		age := now - svc.LastHeartbeat
@@ -416,13 +416,13 @@ func (r *AlgorithmRegistry) checkAndRemoveExpired() {
 
 	now := time.Now().Unix()
 	timeoutSec := int64(r.timeout.Seconds())
-	
+
 	totalExpired := 0
 	totalAlive := 0
 
 	var expiredServices []conf.AlgorithmService
 	var nearExpiredServices []conf.AlgorithmService // 接近超时的服务（用于预警）
-	
+
 	for taskType, services := range r.services {
 		var alive []conf.AlgorithmService
 		for _, svc := range services {
@@ -430,7 +430,7 @@ func (r *AlgorithmRegistry) checkAndRemoveExpired() {
 			if age < timeoutSec {
 				alive = append(alive, svc)
 				totalAlive++
-				
+
 				// 预警：如果心跳年龄超过80%的超时时间，记录警告
 				if age > timeoutSec*80/100 {
 					nearExpiredServices = append(nearExpiredServices, svc)
@@ -458,20 +458,20 @@ func (r *AlgorithmRegistry) checkAndRemoveExpired() {
 		}
 		r.services[taskType] = alive
 	}
-	
+
 	// 解锁后触发注销回调（避免死锁）
 	r.mu.Unlock()
-	
+
 	// 触发注销回调
 	if r.onUnregisterCallback != nil && len(expiredServices) > 0 {
 		for _, svc := range expiredServices {
 			go r.onUnregisterCallback(svc.ServiceID, "heartbeat_timeout")
 		}
 	}
-	
+
 	// 重新加锁
 	r.mu.Lock()
-	
+
 	// 定期输出服务健康状态摘要
 	if totalExpired > 0 {
 		r.log.Info("heartbeat check completed - services expired",
@@ -479,7 +479,7 @@ func (r *AlgorithmRegistry) checkAndRemoveExpired() {
 			slog.Int("total_expired", totalExpired),
 			slog.String("note", "expired services will be removed and can re-register when they come back online"))
 	}
-	
+
 	// 记录接近超时的服务数量（用于监控）
 	if len(nearExpiredServices) > 0 {
 		r.log.Warn("services with high heartbeat age detected",
@@ -540,7 +540,7 @@ func (r *AlgorithmRegistry) ListAllServiceInstances() []conf.AlgorithmService {
 // ListAllServiceInstancesLocked 列出所有服务实例（需要已加锁）
 func (r *AlgorithmRegistry) ListAllServiceInstancesLocked() []conf.AlgorithmService {
 	var all []conf.AlgorithmService
-	seenEndpoints := make(map[string]bool)  // 按endpoint去重
+	seenEndpoints := make(map[string]bool) // 按endpoint去重
 
 	for _, services := range r.services {
 		for _, svc := range services {
@@ -571,7 +571,7 @@ func (r *AlgorithmRegistry) GetAlgorithmWithLoadBalance(taskType string) *conf.A
 			slog.Int("total_registered_endpoints", len(r.ListAllServiceInstancesLocked())))
 		return nil
 	}
-	
+
 	// 记录可用服务列表（debug）
 	endpoints := make([]string, len(services))
 	callCounts := make([]int, len(services))
@@ -579,7 +579,7 @@ func (r *AlgorithmRegistry) GetAlgorithmWithLoadBalance(taskType string) *conf.A
 		endpoints[i] = svc.Endpoint
 		callCounts[i] = r.callCounters[svc.Endpoint]
 	}
-	
+
 	r.log.Debug("load balance: available services",
 		slog.String("task_type", taskType),
 		slog.Int("service_count", len(services)),
@@ -589,11 +589,11 @@ func (r *AlgorithmRegistry) GetAlgorithmWithLoadBalance(taskType string) *conf.A
 	if len(services) == 1 {
 		// 只有一个实例，直接返回（不增加计数）
 		selected := &services[0]
-		
+
 		r.log.Debug("load balance: single service",
 			slog.String("task_type", taskType),
 			slog.String("endpoint", selected.Endpoint))
-		
+
 		return selected
 	}
 
@@ -602,24 +602,24 @@ func (r *AlgorithmRegistry) GetAlgorithmWithLoadBalance(taskType string) *conf.A
 	// 1. 保证每个服务都能获得请求（公平性）
 	// 2. 根据总耗时动态调整分配权重（性能优化）
 	// 3. 响应越快，权重越高，获得更多请求
-	
+
 	type serviceWeight struct {
 		index       int
 		endpoint    string
 		serviceID   string
-		avgRespTime int64  // 平均响应时间（毫秒）
-		weight      int    // 计算出的权重
-		hasData     bool   // 是否有响应时间数据
+		avgRespTime int64 // 平均响应时间（毫秒）
+		weight      int   // 计算出的权重
+		hasData     bool  // 是否有响应时间数据
 	}
-	
+
 	// 计算每个服务的权重
 	weights := make([]serviceWeight, len(services))
 	totalWeight := 0
 	newServiceCount := 0
-	
+
 	for i, svc := range services {
 		times := r.responseTimes[svc.Endpoint]
-		
+
 		if len(times) == 0 {
 			// 新服务：给予中等权重，让它们快速参与并收集数据
 			weights[i] = serviceWeight{
@@ -627,7 +627,7 @@ func (r *AlgorithmRegistry) GetAlgorithmWithLoadBalance(taskType string) *conf.A
 				endpoint:    svc.Endpoint,
 				serviceID:   svc.ServiceID,
 				avgRespTime: 0,
-				weight:      10,  // 新服务默认权重10
+				weight:      10, // 新服务默认权重10
 				hasData:     false,
 			}
 			newServiceCount++
@@ -639,7 +639,7 @@ func (r *AlgorithmRegistry) GetAlgorithmWithLoadBalance(taskType string) *conf.A
 				sum += t
 			}
 			avgTime := sum / int64(len(times))
-			
+
 			// 计算权重：响应时间越短，权重越高
 			// 权重公式：weight = max(1, 1000 / avgTime)
 			// 例如：50ms → 权重20，100ms → 权重10，200ms → 权重5
@@ -647,15 +647,15 @@ func (r *AlgorithmRegistry) GetAlgorithmWithLoadBalance(taskType string) *conf.A
 			if avgTime > 0 {
 				weight = int(1000 / avgTime)
 				if weight < 1 {
-					weight = 1  // 最小权重1，保证每个服务都能获得请求
+					weight = 1 // 最小权重1，保证每个服务都能获得请求
 				}
 				if weight > 100 {
-					weight = 100  // 最大权重100，避免极端情况
+					weight = 100 // 最大权重100，避免极端情况
 				}
 			} else {
-				weight = 10  // 默认权重
+				weight = 10 // 默认权重
 			}
-			
+
 			weights[i] = serviceWeight{
 				index:       i,
 				endpoint:    svc.Endpoint,
@@ -667,16 +667,16 @@ func (r *AlgorithmRegistry) GetAlgorithmWithLoadBalance(taskType string) *conf.A
 			totalWeight += weight
 		}
 	}
-	
+
 	// 使用加权轮询选择服务
 	counter := r.weightCounters[taskType]
 	r.weightCounters[taskType] = (counter + 1) % totalWeight
-	
+
 	// 找出counter对应的服务
 	var selected *conf.AlgorithmService
 	cumulative := 0
 	selectedIdx := 0
-	
+
 	for i, w := range weights {
 		cumulative += w.weight
 		if counter < cumulative {
@@ -685,32 +685,32 @@ func (r *AlgorithmRegistry) GetAlgorithmWithLoadBalance(taskType string) *conf.A
 			break
 		}
 	}
-	
+
 	// 如果没有找到（理论上不应该发生），使用Round-Robin兜底
 	if selected == nil {
 		idx := r.rrIndexes[taskType] % len(services)
 		selected = &services[idx]
 		selectedIdx = idx
 		r.rrIndexes[taskType] = (r.rrIndexes[taskType] + 1) % len(services)
-		
+
 		r.log.Warn("load balance: fallback to round-robin",
 			slog.String("task_type", taskType),
 			slog.String("selected_endpoint", selected.Endpoint))
 	} else {
 		// 记录选择结果
 		w := weights[selectedIdx]
-		
+
 		// 构建所有服务的权重信息（用于调试）
 		weightInfo := make([]map[string]interface{}, len(weights))
 		for i, weight := range weights {
 			weightInfo[i] = map[string]interface{}{
-				"endpoint":      weight.endpoint,
-				"weight":        weight.weight,
-				"avg_time_ms":   weight.avgRespTime,
-				"has_data":      weight.hasData,
+				"endpoint":    weight.endpoint,
+				"weight":      weight.weight,
+				"avg_time_ms": weight.avgRespTime,
+				"has_data":    weight.hasData,
 			}
 		}
-		
+
 		if w.hasData {
 			r.log.Debug("load balance: weighted round-robin selected",
 				slog.String("task_type", taskType),
@@ -732,8 +732,26 @@ func (r *AlgorithmRegistry) GetAlgorithmWithLoadBalance(taskType string) *conf.A
 				slog.Int("total_services", len(services)))
 		}
 	}
-	
+
 	return selected
+}
+
+// GetAlgorithmByEndpoint 根据任务类型和端点返回算法实例
+func (r *AlgorithmRegistry) GetAlgorithmByEndpoint(taskType, endpoint string) *conf.AlgorithmService {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	services, ok := r.services[taskType]
+	if !ok || len(services) == 0 {
+		return nil
+	}
+
+	for i := range services {
+		if services[i].Endpoint == endpoint {
+			return &services[i]
+		}
+	}
+	return nil
 }
 
 // IncrementCallCount 增加调用计数（仅用于成功的调用）
@@ -750,10 +768,10 @@ func (r *AlgorithmRegistry) IncrementCallCount(endpoint string) {
 func (r *AlgorithmRegistry) RecordInferenceSuccess(endpoint string, responseTimeMs int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	// 增加成功计数
 	r.callCounters[endpoint]++
-	
+
 	// 记录响应时间（使用滑动窗口，只保留最近N次）
 	times := r.responseTimes[endpoint]
 	times = append(times, responseTimeMs)
@@ -761,14 +779,14 @@ func (r *AlgorithmRegistry) RecordInferenceSuccess(endpoint string, responseTime
 		times = times[len(times)-ResponseTimeWindow:]
 	}
 	r.responseTimes[endpoint] = times
-	
+
 	// 计算平均响应时间
 	var sum int64
 	for _, t := range times {
 		sum += t
 	}
 	avgTime := sum / int64(len(times))
-	
+
 	r.log.Debug("inference success recorded",
 		slog.String("endpoint", endpoint),
 		slog.Int("success_count", r.callCounters[endpoint]),
@@ -810,33 +828,33 @@ type ServiceLoadBalanceInfo struct {
 	Endpoint        string  `json:"endpoint"`
 	ServiceID       string  `json:"service_id"`
 	Name            string  `json:"name"`
-	AvgResponseMs   int64   `json:"avg_response_ms"`    // 平均响应时间
-	Weight          int     `json:"weight"`             // 当前权重
-	CallCount       int     `json:"call_count"`         // 调用次数
-	AllocationRatio float64 `json:"allocation_ratio"`   // 分配比例（%）
-	HasData         bool    `json:"has_data"`           // 是否有性能数据
+	AvgResponseMs   int64   `json:"avg_response_ms"`  // 平均响应时间
+	Weight          int     `json:"weight"`           // 当前权重
+	CallCount       int     `json:"call_count"`       // 调用次数
+	AllocationRatio float64 `json:"allocation_ratio"` // 分配比例（%）
+	HasData         bool    `json:"has_data"`         // 是否有性能数据
 }
 
 // GetLoadBalanceInfo 获取指定任务类型的负载均衡信息
 func (r *AlgorithmRegistry) GetLoadBalanceInfo(taskType string) *LoadBalanceInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	services, ok := r.services[taskType]
 	if !ok || len(services) == 0 {
 		return nil
 	}
-	
+
 	// 计算权重（与GetAlgorithmWithLoadBalance中的逻辑一致）
 	totalWeight := 0
 	serviceInfos := make([]ServiceLoadBalanceInfo, len(services))
-	
+
 	for i, svc := range services {
 		times := r.responseTimes[svc.Endpoint]
 		var avgTime int64
 		var weight int
 		hasData := false
-		
+
 		if len(times) == 0 {
 			// 新服务：默认权重10
 			weight = 10
@@ -848,7 +866,7 @@ func (r *AlgorithmRegistry) GetLoadBalanceInfo(taskType string) *LoadBalanceInfo
 			}
 			avgTime = sum / int64(len(times))
 			hasData = true
-			
+
 			// 计算权重：weight = max(1, min(100, 1000 / avgTime))
 			if avgTime > 0 {
 				weight = int(1000 / avgTime)
@@ -862,7 +880,7 @@ func (r *AlgorithmRegistry) GetLoadBalanceInfo(taskType string) *LoadBalanceInfo
 				weight = 10
 			}
 		}
-		
+
 		serviceInfos[i] = ServiceLoadBalanceInfo{
 			Endpoint:      svc.Endpoint,
 			ServiceID:     svc.ServiceID,
@@ -874,14 +892,14 @@ func (r *AlgorithmRegistry) GetLoadBalanceInfo(taskType string) *LoadBalanceInfo
 		}
 		totalWeight += weight
 	}
-	
+
 	// 计算分配比例
 	for i := range serviceInfos {
 		if totalWeight > 0 {
 			serviceInfos[i].AllocationRatio = float64(serviceInfos[i].Weight) / float64(totalWeight) * 100
 		}
 	}
-	
+
 	return &LoadBalanceInfo{
 		TaskType:      taskType,
 		TotalServices: len(services),
@@ -895,19 +913,19 @@ func (r *AlgorithmRegistry) GetLoadBalanceInfo(taskType string) *LoadBalanceInfo
 func (r *AlgorithmRegistry) GetAllLoadBalanceInfo() map[string]*LoadBalanceInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	result := make(map[string]*LoadBalanceInfo)
-	
+
 	for taskType := range r.services {
 		r.mu.RUnlock()
 		info := r.GetLoadBalanceInfo(taskType)
 		r.mu.RLock()
-		
+
 		if info != nil {
 			result[taskType] = info
 		}
 	}
-	
+
 	return result
 }
 
@@ -949,4 +967,3 @@ func (r *AlgorithmRegistry) GetServiceStats(taskType string) []ServiceStat {
 
 	return stats
 }
-

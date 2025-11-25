@@ -123,8 +123,8 @@ type Bootstrap struct {
 	Debug                 bool                  `toml:"-" json:"-"`
 	BuildVersion          string                `toml:"-" json:"-"`
 	DaemonAddr            string                `mapstructure:"daemonaddr"`
-	Base                  Base                  `mapstructure:"base"` //基础配置
-	Data                  Database              `mapstructure:"data"` // 数据
+	Base                  Base                  `mapstructure:"base"`    //基础配置
+	Data                  Database              `mapstructure:"data"`    // 数据
 	BaseLog               BaseLog               `mapstructure:"baselog"` // 日志
 	DefaultHttpConfig     DefaultHttpConfig     `mapstructure:"defaulthttpconfig"`
 	GopCacheConfig        GopCacheConfig        `json:"gop_cache_config" mapstructure:"gopcacheconfig"`
@@ -147,10 +147,10 @@ type Bootstrap struct {
 	LalConfig             LalConfig             `json:"lal" mapstructure:"lalconfig"` // LalConfig对应的config.toml中则需要是 lalconfig 选项
 
 	// FrameExtractor 插件配置
-	FrameExtractor       FrameExtractorConfig   `json:"frame_extractor" mapstructure:"frame_extractor"`
-	
+	FrameExtractor FrameExtractorConfig `json:"frame_extractor" mapstructure:"frame_extractor"`
+
 	// AIAnalysis 智能分析插件配置
-	AIAnalysis           AIAnalysisConfig       `json:"ai_analysis" mapstructure:"ai_analysis"`
+	AIAnalysis AIAnalysisConfig `json:"ai_analysis" mapstructure:"ai_analysis"`
 
 	*config.Config
 	LogicCfg *logic.Config
@@ -289,43 +289,44 @@ type VodConfig struct {
 
 // FrameExtractorConfig 抽帧插件配置
 type FrameExtractorConfig struct {
-    Enable       bool   `json:"enable" mapstructure:"enable"`
-    // 全局默认抽帧间隔（毫秒），可被任务级覆盖
-    IntervalMs   int    `json:"interval_ms" mapstructure:"interval_ms"`
-    // 本地存储根目录
-    OutputDir    string `json:"output_dir" mapstructure:"output_dir"`
-    // 存储类型：local|minio
-    Store        string `json:"store" mapstructure:"store"`
-    // 任务类型列表，用于智能分析分类
-    TaskTypes    []string `json:"task_types" mapstructure:"task_types"`
-    // 全局默认最大抽帧图片数量（0表示不限制），可被任务级覆盖
-    MaxFrameCount int `json:"max_frame_count" mapstructure:"max_frame_count"`
-    // MinIO 配置（仅当 store==minio 时生效）
-    MinIO MinIOConfig `json:"minio" mapstructure:"minio"`
-    // 任务清单（可选），未配置时仅启用模块等待 API 下发
-    Tasks []FrameExtractTask `json:"tasks" mapstructure:"tasks"`
+	Enable bool `json:"enable" mapstructure:"enable"`
+	// 全局默认抽帧间隔（毫秒），可被任务级覆盖
+	IntervalMs int `json:"interval_ms" mapstructure:"interval_ms"`
+	// 本地存储根目录
+	OutputDir string `json:"output_dir" mapstructure:"output_dir"`
+	// 存储类型：local|minio
+	Store string `json:"store" mapstructure:"store"`
+	// 任务类型列表，用于智能分析分类
+	TaskTypes []string `json:"task_types" mapstructure:"task_types"`
+	// 全局默认最大抽帧图片数量（0表示不限制），可被任务级覆盖
+	MaxFrameCount int `json:"max_frame_count" mapstructure:"max_frame_count"`
+	// MinIO 配置（仅当 store==minio 时生效）
+	MinIO MinIOConfig `json:"minio" mapstructure:"minio"`
+	// 任务清单（可选），未配置时仅启用模块等待 API 下发
+	Tasks []FrameExtractTask `json:"tasks" mapstructure:"tasks"`
 }
 
 type MinIOConfig struct {
-    Endpoint  string `json:"endpoint" mapstructure:"endpoint"`
-    Bucket    string `json:"bucket" mapstructure:"bucket"`
-    AccessKey string `json:"access_key" mapstructure:"access_key"`
-    SecretKey string `json:"secret_key" mapstructure:"secret_key"`
-    UseSSL    bool   `json:"use_ssl" mapstructure:"use_ssl"`
-    BasePath  string `json:"base_path" mapstructure:"base_path"`
+	Endpoint  string `json:"endpoint" mapstructure:"endpoint"`
+	Bucket    string `json:"bucket" mapstructure:"bucket"`
+	AccessKey string `json:"access_key" mapstructure:"access_key"`
+	SecretKey string `json:"secret_key" mapstructure:"secret_key"`
+	UseSSL    bool   `json:"use_ssl" mapstructure:"use_ssl"`
+	BasePath  string `json:"base_path" mapstructure:"base_path"`
 }
 
 type FrameExtractTask struct {
-    ID           string `json:"id" mapstructure:"id"`
-    TaskType     string `json:"task_type" mapstructure:"task_type"` // 任务类型，用于智能分析
-    RtspURL      string `json:"rtsp_url" mapstructure:"rtsp_url"`
-    IntervalMs   int    `json:"interval_ms" mapstructure:"interval_ms"`
-    OutputPath   string `json:"output_path" mapstructure:"output_path"`
-    Enabled      bool   `json:"enabled" mapstructure:"enabled"` // task running state
-    ConfigStatus string `json:"config_status" mapstructure:"config_status"` // 配置状态: "unconfigured" | "configured"
-    PreviewImage string `json:"preview_image" mapstructure:"preview_image"` // 预览图片路径
-    MaxFrameCount int   `json:"max_frame_count" mapstructure:"max_frame_count"` // 最大抽帧图片数量（0或未配置时使用全局配置）
-    SaveAlertImage *bool `json:"save_alert_image" mapstructure:"save_alert_image"` // 是否保存告警图片（nil表示使用全局配置，true/false表示任务级配置）
+	ID                         string `json:"id" mapstructure:"id"`
+	TaskType                   string `json:"task_type" mapstructure:"task_type"`                                                 // 任务类型，用于智能分析
+	PreferredAlgorithmEndpoint string `json:"preferred_algorithm_endpoint,omitempty" mapstructure:"preferred_algorithm_endpoint"` // 绊线等特殊任务绑定的算法端点
+	RtspURL                    string `json:"rtsp_url" mapstructure:"rtsp_url"`
+	IntervalMs                 int    `json:"interval_ms" mapstructure:"interval_ms"`
+	OutputPath                 string `json:"output_path" mapstructure:"output_path"`
+	Enabled                    bool   `json:"enabled" mapstructure:"enabled"`                   // task running state
+	ConfigStatus               string `json:"config_status" mapstructure:"config_status"`       // 配置状态: "unconfigured" | "configured"
+	PreviewImage               string `json:"preview_image" mapstructure:"preview_image"`       // 预览图片路径
+	MaxFrameCount              int    `json:"max_frame_count" mapstructure:"max_frame_count"`   // 最大抽帧图片数量（0或未配置时使用全局配置）
+	SaveAlertImage             *bool  `json:"save_alert_image" mapstructure:"save_alert_image"` // 是否保存告警图片（nil表示使用全局配置，true/false表示任务级配置）
 }
 type RecordConfig struct {
 	EnableFlv            bool   `json:"enable_flv"`
@@ -440,54 +441,54 @@ func (s *Bootstrap) Key() string {
 
 // AIAnalysisConfig 智能分析插件配置
 type AIAnalysisConfig struct {
-	Enable              bool    `json:"enable" mapstructure:"enable"`
-	ScanIntervalSec     float64 `json:"scan_interval_sec" mapstructure:"scan_interval_sec"` // 支持小数，如0.2秒
-	MQType              string `json:"mq_type" mapstructure:"mq_type"` // kafka|rabbitmq
-	MQAddress           string `json:"mq_address" mapstructure:"mq_address"`
-	MQTopic             string `json:"mq_topic" mapstructure:"mq_topic"`
-	HeartbeatTimeoutSec int    `json:"heartbeat_timeout_sec" mapstructure:"heartbeat_timeout_sec"`
-	MaxConcurrentInfer  int    `json:"max_concurrent_infer" mapstructure:"max_concurrent_infer"`
-	MaxQueueSize        int    `json:"max_queue_size" mapstructure:"max_queue_size"`           // 推理队列最大容量，默认: 100
-	SaveOnlyWithDetection bool `json:"save_only_with_detection" mapstructure:"save_only_with_detection"` // 只保存有检测结果的告警
-	
+	Enable                bool    `json:"enable" mapstructure:"enable"`
+	ScanIntervalSec       float64 `json:"scan_interval_sec" mapstructure:"scan_interval_sec"` // 支持小数，如0.2秒
+	MQType                string  `json:"mq_type" mapstructure:"mq_type"`                     // kafka|rabbitmq
+	MQAddress             string  `json:"mq_address" mapstructure:"mq_address"`
+	MQTopic               string  `json:"mq_topic" mapstructure:"mq_topic"`
+	HeartbeatTimeoutSec   int     `json:"heartbeat_timeout_sec" mapstructure:"heartbeat_timeout_sec"`
+	MaxConcurrentInfer    int     `json:"max_concurrent_infer" mapstructure:"max_concurrent_infer"`
+	MaxQueueSize          int     `json:"max_queue_size" mapstructure:"max_queue_size"`                     // 推理队列最大容量，默认: 100
+	SaveOnlyWithDetection bool    `json:"save_only_with_detection" mapstructure:"save_only_with_detection"` // 只保存有检测结果的告警
+
 	// 存储路径配置
 	AlertBasePath string `json:"alert_base_path" mapstructure:"alert_base_path"` // 告警图片存储路径前缀，默认: alerts/
-	
+
 	// 批量写入配置
 	AlertBatchEnabled     bool `json:"alert_batch_enabled" mapstructure:"alert_batch_enabled"`           // 是否启用批量写入，默认: true
 	AlertBatchSize        int  `json:"alert_batch_size" mapstructure:"alert_batch_size"`                 // 批量写入大小，达到此数量触发写入，默认: 100
 	AlertBatchIntervalSec int  `json:"alert_batch_interval_sec" mapstructure:"alert_batch_interval_sec"` // 批量写入刷新间隔（秒），默认: 2
-	
+
 	// 图片移动配置
 	AlertImageMoveConcurrent int `json:"alert_image_move_concurrent" mapstructure:"alert_image_move_concurrent"` // 图片移动最大并发数，默认: 50
-	
+
 	// 数据库限制配置
 	MaxAlertsInDB int `json:"max_alerts_in_db" mapstructure:"max_alerts_in_db"` // 数据库中最多保存的告警记录数，超过自动删除最旧的，默认: 1000，0表示不限制
 }
 
 // AlgorithmService 算法服务注册信息
 type AlgorithmService struct {
-	ServiceID             string   `json:"service_id"`               // 服务唯一ID
-	Name                  string   `json:"name"`                     // 服务名称
-	TaskTypes             []string `json:"task_types"`               // 支持的任务类型
-	Endpoint              string   `json:"endpoint"`                 // 推理HTTP端点
-	Version               string   `json:"version"`                  // 版本号
-	RegisterAt            int64    `json:"register_at"`              // 注册时间戳
-	LastHeartbeat         int64    `json:"last_heartbeat"`           // 最后心跳时间戳
-	
+	ServiceID     string   `json:"service_id"`     // 服务唯一ID
+	Name          string   `json:"name"`           // 服务名称
+	TaskTypes     []string `json:"task_types"`     // 支持的任务类型
+	Endpoint      string   `json:"endpoint"`       // 推理HTTP端点
+	Version       string   `json:"version"`        // 版本号
+	RegisterAt    int64    `json:"register_at"`    // 注册时间戳
+	LastHeartbeat int64    `json:"last_heartbeat"` // 最后心跳时间戳
+
 	// 性能统计（由心跳更新）
-	TotalRequests         int64   `json:"total_requests"`            // 累积推理次数
-	AvgInferenceTimeMs    float64 `json:"avg_inference_time_ms"`     // 平均推理时间（毫秒）
-	LastInferenceTimeMs   float64 `json:"last_inference_time_ms"`    // 最近一次推理时间（毫秒）
-	LastTotalTimeMs       float64 `json:"last_total_time_ms"`        // 最近一次总耗时（毫秒）
+	TotalRequests       int64   `json:"total_requests"`         // 累积推理次数
+	AvgInferenceTimeMs  float64 `json:"avg_inference_time_ms"`  // 平均推理时间（毫秒）
+	LastInferenceTimeMs float64 `json:"last_inference_time_ms"` // 最近一次推理时间（毫秒）
+	LastTotalTimeMs     float64 `json:"last_total_time_ms"`     // 最近一次总耗时（毫秒）
 }
 
 // HeartbeatRequest 心跳请求（可选携带统计数据）
 type HeartbeatRequest struct {
-	TotalRequests       int64   `json:"total_requests"`            // 累积推理次数
-	AvgInferenceTimeMs  float64 `json:"avg_inference_time_ms"`     // 平均推理时间（毫秒）
-	LastInferenceTimeMs float64 `json:"last_inference_time_ms"`    // 最近一次推理时间（毫秒）
-	LastTotalTimeMs     float64 `json:"last_total_time_ms"`        // 最近一次总耗时（毫秒）
+	TotalRequests       int64   `json:"total_requests"`         // 累积推理次数
+	AvgInferenceTimeMs  float64 `json:"avg_inference_time_ms"`  // 平均推理时间（毫秒）
+	LastInferenceTimeMs float64 `json:"last_inference_time_ms"` // 最近一次推理时间（毫秒）
+	LastTotalTimeMs     float64 `json:"last_total_time_ms"`     // 最近一次总耗时（毫秒）
 }
 
 // InferenceRequest 推理请求

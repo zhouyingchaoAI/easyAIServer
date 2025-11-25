@@ -234,6 +234,15 @@ Content-Type: application/json
 
 **MinIO模式**：会自动创建 `<bucket>/<base_path>/cam1/.keep` 文件
 
+> ⚠️ 对于 `task_type = "绊线人数统计"` 的任务，还必须设置 `preferred_algorithm_endpoint` 字段来绑定唯一算法服务端点：
+> ```json
+> {
+>   "task_type": "绊线人数统计",
+>   "preferred_algorithm_endpoint": "http://tripwire-algo:8000/infer",
+>   ...
+> }
+> ```
+
 ### 删除任务
 
 ```bash

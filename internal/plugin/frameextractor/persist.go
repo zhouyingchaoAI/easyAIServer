@@ -19,41 +19,41 @@ func (s *Service) saveConfigToFile(cfgPath string) error {
 
 	content := string(data)
 	lines := strings.Split(content, "\n")
-	
+
 	var out []string
 	inFrameExtractor := false
 	sectionStart := -1
 	sectionEnd := -1
-	
+
 	// find [frame_extractor] section boundaries
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		
+
 		if trimmed == "[frame_extractor]" {
 			inFrameExtractor = true
 			sectionStart = i
 			continue
 		}
-		
+
 		// detect end of frame_extractor section
-		if inFrameExtractor && strings.HasPrefix(trimmed, "[") && 
-		   !strings.HasPrefix(trimmed, "[[frame_extractor") && 
-		   !strings.HasPrefix(trimmed, "[frame_extractor.") {
+		if inFrameExtractor && strings.HasPrefix(trimmed, "[") &&
+			!strings.HasPrefix(trimmed, "[[frame_extractor") &&
+			!strings.HasPrefix(trimmed, "[frame_extractor.") {
 			sectionEnd = i
 			break
 		}
 	}
-	
+
 	// rebuild content
 	if sectionStart >= 0 {
 		// add lines before section
 		out = append(out, lines[:sectionStart]...)
-		
+
 		// add new section
 		out = append(out, "[frame_extractor]")
 		out = append(out, s.buildConfigLines()...)
 		out = append(out, s.buildTaskLines()...)
-		
+
 		// add lines after section
 		if sectionEnd >= 0 {
 			out = append(out, lines[sectionEnd:]...)
@@ -68,7 +68,7 @@ func (s *Service) saveConfigToFile(cfgPath string) error {
 		out = append(out, s.buildConfigLines()...)
 		out = append(out, s.buildTaskLines()...)
 	}
-	
+
 	return os.WriteFile(cfgPath, []byte(strings.Join(out, "\n")), 0644)
 }
 
@@ -78,7 +78,7 @@ func (s *Service) buildConfigLines() []string {
 	lines = append(lines, fmt.Sprintf("interval_ms = %d", s.cfg.IntervalMs))
 	lines = append(lines, fmt.Sprintf("output_dir = '%s'", s.cfg.OutputDir))
 	lines = append(lines, fmt.Sprintf("store = '%s'", s.cfg.Store))
-	
+
 	// 添加任务类型列表
 	if len(s.cfg.TaskTypes) > 0 {
 		taskTypesStr := "["
@@ -91,7 +91,7 @@ func (s *Service) buildConfigLines() []string {
 		taskTypesStr += "]"
 		lines = append(lines, fmt.Sprintf("task_types = %s", taskTypesStr))
 	}
-	
+
 	lines = append(lines, "")
 	lines = append(lines, "[frame_extractor.minio]")
 	lines = append(lines, fmt.Sprintf("endpoint = '%s'", s.cfg.MinIO.Endpoint))
@@ -110,6 +110,9 @@ func (s *Service) buildTaskLines() []string {
 		lines = append(lines, "[[frame_extractor.tasks]]")
 		lines = append(lines, fmt.Sprintf("id = '%s'", t.ID))
 		lines = append(lines, fmt.Sprintf("task_type = '%s'", t.TaskType))
+		if trimmed := strings.TrimSpace(t.PreferredAlgorithmEndpoint); trimmed != "" {
+			lines = append(lines, fmt.Sprintf("preferred_algorithm_endpoint = '%s'", trimmed))
+		}
 		lines = append(lines, fmt.Sprintf("rtsp_url = '%s'", t.RtspURL))
 		lines = append(lines, fmt.Sprintf("interval_ms = %d", t.IntervalMs))
 		lines = append(lines, fmt.Sprintf("output_path = '%s'", t.OutputPath))

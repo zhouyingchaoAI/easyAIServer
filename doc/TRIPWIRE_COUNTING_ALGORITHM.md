@@ -129,6 +129,20 @@ task_types = ['人数统计', '绊线人数统计', '人员跌倒', ...]
 3. 启动任务开始统计
 ```
 
+### 4. 绑定固定算法端点（必须）
+
+绊线人数统计划定为“单算法服务”场景。每个绊线任务必须单独绑定一个算法端点，否则调度器会丢弃该任务生成的所有图片。配置方式：
+
+```toml
+[[frame_extractor.tasks]]
+id = 'entrance_tripwire'
+task_type = '绊线人数统计'
+rtsp_url = 'rtsp://...'
+preferred_algorithm_endpoint = 'http://192.168.1.100:9000/infer'
+```
+
+当 `preferred_algorithm_endpoint` 未配置或对应端点未注册时，AI调度器会在日志中提示并删除该任务的图片，避免错误的负载均衡。
+
 ### 3. 配置示例
 
 #### 示例1: 商场入口

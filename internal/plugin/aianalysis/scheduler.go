@@ -60,6 +60,8 @@ type Scheduler struct {
 	onProcessedCallback func()
 }
 
+const tripwireTaskType = "绊线人数统计"
+
 // InferenceResult 推理结果（用于异步保存告警）
 type InferenceResult struct {
 	Alert         *model.Alert
@@ -90,8 +92,8 @@ func NewScheduler(registry *AlgorithmRegistry, minioClient *minio.Client, bucket
 		DisableKeepAlives: false, // 改为false，启用连接复用
 		// 优化连接超时配置
 		DialContext: (&net.Dialer{
-			Timeout:   5 * time.Second,   // 缩短到5秒，快速失败
-			KeepAlive: 30 * time.Second,  // 启用keep-alive，30秒保活
+			Timeout:   5 * time.Second,  // 缩短到5秒，快速失败
+			KeepAlive: 30 * time.Second, // 启用keep-alive，30秒保活
 		}).DialContext,
 	}
 
@@ -239,13 +241,20 @@ func (s *Scheduler) CheckImageExists(imagePath string) (bool, error) {
 
 // ScheduleInference 调度推理
 func (s *Scheduler) ScheduleInference(image ImageInfo) {
-	// 使用负载均衡选择一个算法实例
-	algorithm := s.registry.GetAlgorithmWithLoadBalance(image.TaskType)
+	// 根据任务类型选择算法实例（绊线任务需要绑定端点）
+	algorithm, selectErr := s.selectAlgorithmForImage(image)
 	if algorithm == nil {
-		s.log.Debug("no algorithm for task type, deleting image",
+		logArgs := []any{
 			slog.String("task_type", image.TaskType),
 			slog.String("task_id", image.TaskID),
-			slog.String("image", image.Path))
+			slog.String("image", image.Path),
+		}
+		if selectErr != nil {
+			logArgs = append(logArgs, slog.String("reason", selectErr.Error()))
+			s.log.Error("failed to select algorithm, deleting image", logArgs...)
+		} else {
+			s.log.Debug("no algorithm for task type, deleting image", logArgs...)
+		}
 
 		// 没有算法服务，删除图片避免积压
 		if err := s.deleteImage(image.Path); err != nil {
@@ -616,7 +625,7 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 
 	// 检查是否保存告警图片（不影响告警信息的保存和推送）
 	shouldSaveImage := s.shouldSaveAlertImage(image.TaskID, algoConfig)
-	
+
 	// 准备告警图片路径
 	var alertImagePath string
 	var alertImageURL string
@@ -681,14 +690,14 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 		// 不保存图片，路径为空
 		alertImagePath = ""
 		alertImageURL = ""
-		
+
 		// 删除原图片（不保存告警图片）
 		s.log.Info("alert image saving disabled for task, deleting original image",
 			slog.String("task_id", image.TaskID),
 			slog.String("task_type", image.TaskType),
 			slog.String("image", image.Path),
 			slog.String("note", "alert will be saved without image"))
-		
+
 		if err := s.deleteImageWithReason(image.Path, "alert_image_save_disabled"); err != nil {
 			s.log.Error("failed to delete image after alert image disabled",
 				slog.String("path", image.Path),
@@ -1046,7 +1055,7 @@ func (s *Scheduler) shouldSaveAlertImage(taskID string, algoConfig map[string]in
 			}
 		}
 	}
-	
+
 	// 其次从算法配置中读取（兼容旧逻辑）
 	if algoConfig != nil {
 		if val, ok := parseBoolFromConfig(algoConfig["save_alert_image"]); ok {
@@ -1058,7 +1067,7 @@ func (s *Scheduler) shouldSaveAlertImage(taskID string, algoConfig map[string]in
 			}
 		}
 	}
-	
+
 	// 默认返回true（保存告警图片）
 	return true
 }
@@ -1139,7 +1148,7 @@ func (s *Scheduler) moveImageToAlertPathAsync(srcPath, dstPath string) error {
 func (s *Scheduler) moveImageToAlertPathInternal(srcPath, dstPath string) error {
 	// 记录开始时间
 	startTime := time.Now()
-	
+
 	// 优化超时时间：从15秒降到5秒，快速失败
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1157,7 +1166,7 @@ func (s *Scheduler) moveImageToAlertPathInternal(srcPath, dstPath string) error 
 
 	_, err := s.minio.CopyObject(ctx, dst, src)
 	copyDuration := time.Since(copyStart)
-	
+
 	if err != nil {
 		// 记录失败
 		if s.monitor != nil {
@@ -1196,6 +1205,34 @@ func (s *Scheduler) moveImageToAlertPathInternal(srcPath, dstPath string) error 
 // getFrameExtractorService 获取抽帧服务实例
 func (s *Scheduler) getFrameExtractorService() *frameextractor.Service {
 	return frameextractor.GetGlobal()
+}
+
+func (s *Scheduler) selectAlgorithmForImage(image ImageInfo) (*conf.AlgorithmService, error) {
+	if image.TaskType != tripwireTaskType {
+		return s.registry.GetAlgorithmWithLoadBalance(image.TaskType), nil
+	}
+
+	fxService := s.getFrameExtractorService()
+	if fxService == nil {
+		return nil, fmt.Errorf("frame extractor service unavailable")
+	}
+
+	task := fxService.GetTaskByID(image.TaskID)
+	if task == nil {
+		return nil, fmt.Errorf("frame extractor task not found")
+	}
+
+	preferredEndpoint := strings.TrimSpace(task.PreferredAlgorithmEndpoint)
+	if preferredEndpoint == "" {
+		return nil, fmt.Errorf("preferred_algorithm_endpoint not configured for task")
+	}
+
+	algorithm := s.registry.GetAlgorithmByEndpoint(image.TaskType, preferredEndpoint)
+	if algorithm == nil {
+		return nil, fmt.Errorf("preferred algorithm endpoint %s not registered", preferredEndpoint)
+	}
+
+	return algorithm, nil
 }
 
 // generatePresignedURL 生成图片的预签名URL

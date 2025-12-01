@@ -48,6 +48,16 @@ const RootRoute = {
       },
     },
     {
+      path: '/video-rtsp',
+      name: 'VideoRTSP',
+      component: () => import('@/views/videortsp/index.vue'),
+      meta: {
+        title: '视频转RTSP流',
+        icon: 'mdi:video-wireless',
+        namePath: ['VideoRTSP'],
+      },
+    },
+    {
       path: '/live',
       name: 'Live',
       component: () => import('@/views/live/index.vue'),

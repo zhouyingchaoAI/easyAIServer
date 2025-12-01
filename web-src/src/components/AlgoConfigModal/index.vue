@@ -658,10 +658,12 @@ const drawArrowsForLine = (region) => {
   // 根据方向绘制箭头
   if (direction === 'in') {
     // 进入：箭头垂直线条向下（表示从上方穿过线条进入下方）
-    createArrow(midX, midY, perpAngleDown, color, region.id, 'arrow')
+    // 注意：箭头方向需要反转，因为createArrow中箭头尖端在(x,y)，底边在后面
+    createArrow(midX, midY, perpAngleUp, color, region.id, 'arrow')
   } else if (direction === 'out') {
     // 离开：箭头垂直线条向上（表示从下方穿过线条离开到上方）
-    createArrow(midX, midY, perpAngleUp, color, region.id, 'arrow')
+    // 注意：箭头方向需要反转
+    createArrow(midX, midY, perpAngleDown, color, region.id, 'arrow')
   } else if (direction === 'in_out') {
     // 双向：两个相反的垂直箭头
     // 向下的箭头（进入）
@@ -669,8 +671,8 @@ const drawArrowsForLine = (region) => {
     const offsetX = offset * Math.cos(lineAngle)
     const offsetY = offset * Math.sin(lineAngle)
     
-    createArrow(midX - offsetX, midY - offsetY, perpAngleDown, color, region.id, 'arrow')
-    createArrow(midX + offsetX, midY + offsetY, perpAngleUp, color, region.id, 'arrow')
+    createArrow(midX - offsetX, midY - offsetY, perpAngleUp, color, region.id, 'arrow')
+    createArrow(midX + offsetX, midY + offsetY, perpAngleDown, color, region.id, 'arrow')
   }
 }
 

@@ -655,15 +655,19 @@ const drawDirectionArrow = (ctx, points, direction, color) => {
   }
   
   if (direction === 'in') {
-    drawArrow(midX, midY, perpAngleDown)
-  } else if (direction === 'out') {
+    // 进入：箭头向下（从上方穿过线条进入下方）
+    // 注意：箭头方向需要反转，因为drawArrow中箭头尖端在(x,y)，底边在后面
     drawArrow(midX, midY, perpAngleUp)
+  } else if (direction === 'out') {
+    // 离开：箭头向上（从下方穿过线条离开到上方）
+    // 注意：箭头方向需要反转
+    drawArrow(midX, midY, perpAngleDown)
   } else if (direction === 'in_out') {
     const offset = 15
     const offsetX = offset * Math.cos(lineAngle)
     const offsetY = offset * Math.sin(lineAngle)
-    drawArrow(midX - offsetX, midY - offsetY, perpAngleDown)
-    drawArrow(midX + offsetX, midY + offsetY, perpAngleUp)
+    drawArrow(midX - offsetX, midY - offsetY, perpAngleUp)
+    drawArrow(midX + offsetX, midY + offsetY, perpAngleDown)
   }
 }
 

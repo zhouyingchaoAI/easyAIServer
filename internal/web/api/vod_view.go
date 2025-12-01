@@ -4,9 +4,11 @@ import (
 	"easydarwin/internal/core/video"
 	"easydarwin/internal/data"
 	"easydarwin/internal/gutils/consts"
+	"easydarwin/internal/gutils/efile"
 	"easydarwin/internal/gutils/estring"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"path/filepath"
 	"strings"
 )
 
@@ -27,6 +29,12 @@ func newVODRow(c *gin.Context, vod video.TVod) video.VodView {
 		vod.IsResolution = gCfg.VodConfig.OpenDefinition
 	}
 	vod.ResolutionDefault = gCfg.VodConfig.DefaultDefinition
+	
+	// 如果RealPath为空，构建它
+	if vod.RealPath == consts.EmptyString && vod.Path != consts.EmptyString {
+		vod.RealPath = efile.GetRealPath(filepath.Join(gCfg.VodConfig.SrcDir, vod.Path))
+	}
+	
 	row.TVod = vod
 
 	hostStr := strings.Split(c.Request.Host, ":")

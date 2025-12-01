@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/q191201771/naza/pkg/nazalog"
@@ -37,10 +38,27 @@ func (m *HookSessionMangaer) RemoveHookSession(streamName string) {
 }
 
 func (m *HookSessionMangaer) GetHookSession(streamName string) (bool, *HookSession) {
-	s, ok := m.sessionMap.Load(streamName)
-	if ok {
+	if s, ok := m.sessionMap.Load(streamName); ok {
 		return true, s.(*HookSession)
 	}
 
+	if alt := alternateStreamName(streamName); alt != "" {
+		if s, ok := m.sessionMap.Load(alt); ok {
+			nazalog.Infof("fallback hook session, requested:%s actual:%s", streamName, alt)
+			return true, s.(*HookSession)
+		}
+	}
+
 	return false, nil
+}
+
+func alternateStreamName(name string) string {
+	switch {
+	case strings.HasPrefix(name, "stream_"):
+		return "video_" + strings.TrimPrefix(name, "stream_")
+	case strings.HasPrefix(name, "video_"):
+		return "stream_" + strings.TrimPrefix(name, "video_")
+	default:
+		return ""
+	}
 }

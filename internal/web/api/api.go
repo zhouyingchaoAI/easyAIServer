@@ -48,6 +48,7 @@ func setupRouter(router *gin.Engine, uc *conf.Bootstrap) {
 	registerLiveStream(r)
 	registerReverseProxy(router)
 	registerVod(router, r)
+	registerVideoRTSP(r)
 }
 
 func registerApp(g gin.IRouter) {

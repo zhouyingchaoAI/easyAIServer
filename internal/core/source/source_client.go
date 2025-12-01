@@ -120,15 +120,33 @@ func (client *StreamClient) SetOnline(online int) {
 func (client *StreamClient) regist() {
 }
 func (client *StreamClient) AddSession() error {
+	// 如果Session已存在，先尝试清理（参考流直播功能的改进）
 	if client.Session != nil {
-		return nil
+		client.DelSession()
+		// 等待一小段时间确保Session被清理
+		time.Sleep(100 * time.Millisecond)
 	}
 	id := client.ChannelID
 	customizePubStreamName := fmt.Sprintf("%s%d", StreamName, id)
+	
+	// 添加重试机制，避免流已存在的错误
 	var err error
-	client.Session, err = svr.Lals.GetILalServer().AddCustomizePubSession(customizePubStreamName)
+	maxRetries := 3
+	for i := 0; i < maxRetries; i++ {
+		client.Session, err = svr.Lals.GetILalServer().AddCustomizePubSession(customizePubStreamName)
+		if err == nil {
+			break
+		}
+		
+		// 如果是流已存在的错误，等待后重试
+		if i < maxRetries-1 {
+			slog.Warn(fmt.Sprintf("add customize pub session failed, retrying... (attempt %d/%d)", i+1, maxRetries), "error", err, "id", id)
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+	
 	if err != nil {
-		return fmt.Errorf("add customize pub session err %d", id)
+		return fmt.Errorf("add customize pub session err %d: %v", id, err)
 	}
 	slog.Info("add customize pub session ok", id)
 	if client.AudioEnable {

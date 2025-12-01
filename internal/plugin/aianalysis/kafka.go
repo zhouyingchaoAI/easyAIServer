@@ -81,10 +81,11 @@ func (k *KafkaQueue) PublishAlert(alert model.Alert) error {
 		return err
 	}
 
-	k.log.Debug("alert published to kafka",
+	k.log.Info("alert published to kafka",
 		slog.Uint64("alert_id", uint64(alert.ID)),
 		slog.String("task_id", alert.TaskID),
-		slog.String("task_type", alert.TaskType))
+		slog.String("task_type", alert.TaskType),
+		slog.Int("detection_count", alert.DetectionCount))
 
 	return nil
 }

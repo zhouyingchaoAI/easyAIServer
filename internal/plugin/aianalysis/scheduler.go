@@ -766,9 +766,11 @@ func (s *Scheduler) inferAndSave(image ImageInfo, algorithm conf.AlgorithmServic
 				slog.Duration("mq_duration_ms", mqDuration))
 		} else {
 			mqDuration = time.Since(mqStart)
-			s.log.Debug("alert published to MQ",
+			s.log.Info("alert published to MQ",
 				slog.Uint64("alert_id", uint64(alert.ID)),
 				slog.String("task_id", image.TaskID),
+				slog.String("task_type", image.TaskType),
+				slog.Int("detection_count", detectionCount),
 				slog.Duration("mq_duration_ms", mqDuration))
 		}
 	}
